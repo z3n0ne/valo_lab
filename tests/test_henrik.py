@@ -39,10 +39,10 @@ class ClientRequestTests(unittest.TestCase):
 
     def test_authorization_header_and_url_are_built(self):
         with mock.patch("valorant.henrik.urlopen", return_value=_response({"status": 200, "data": []})) as urlopen:
-            self.client().matches("eu", "pc", "Axel", "EUW", start=20, size=10, mode=None)
+            self.client().matches("eu", "pc", "JoueurTest", "TEST", start=20, size=10, mode=None)
         request = urlopen.call_args[0][0]
         self.assertEqual(request.get_header("Authorization"), "test-key")
-        self.assertIn("/valorant/v4/matches/eu/pc/Axel/EUW", request.full_url)
+        self.assertIn("/valorant/v4/matches/eu/pc/JoueurTest/TEST", request.full_url)
         self.assertIn("start=20", request.full_url)
         self.assertIn("size=10", request.full_url)
         self.assertNotIn("mode=", request.full_url)
@@ -58,7 +58,7 @@ class ClientRequestTests(unittest.TestCase):
         payload = {"status": 400, "errors": [{"message": "Invalid region"}]}
         with mock.patch("valorant.henrik.urlopen", return_value=_response(payload)):
             with self.assertRaises(HenrikError) as ctx:
-                self.client().account("Axel", "EUW")
+                self.client().account("JoueurTest", "TEST")
         self.assertEqual(ctx.exception.status, 400)
         self.assertIn("Invalid region", str(ctx.exception))
 
@@ -68,7 +68,7 @@ class ClientErrorTests(unittest.TestCase):
         error = HTTPError("https://x", 401, "Unauthorized", {}, io.BytesIO(b"{}"))
         with mock.patch("valorant.henrik.urlopen", side_effect=error):
             with self.assertRaises(HenrikError) as ctx:
-                HenrikClient("key", min_interval=0).account("Axel", "EUW")
+                HenrikClient("key", min_interval=0).account("JoueurTest", "TEST")
         self.assertEqual(ctx.exception.status, 401)
         self.assertIn("Clé API", ctx.exception.message)
 
@@ -76,7 +76,7 @@ class ClientErrorTests(unittest.TestCase):
         error = HTTPError("https://x", 404, "Not Found", {}, io.BytesIO(b"{}"))
         with mock.patch("valorant.henrik.urlopen", side_effect=error):
             with self.assertRaises(HenrikError) as ctx:
-                HenrikClient("key", min_interval=0).account("Axel", "EUW")
+                HenrikClient("key", min_interval=0).account("JoueurTest", "TEST")
         self.assertIn("Riot ID", ctx.exception.message)
 
     def test_network_errors_are_retried_then_reported(self):
@@ -84,7 +84,7 @@ class ClientErrorTests(unittest.TestCase):
             "valorant.henrik.time.sleep"
         ) as sleep:
             with self.assertRaises(HenrikError) as ctx:
-                HenrikClient("key", min_interval=0).account("Axel", "EUW")
+                HenrikClient("key", min_interval=0).account("JoueurTest", "TEST")
         self.assertIn("connexion", ctx.exception.message.lower())
         self.assertGreater(sleep.call_count, 0)
 
@@ -93,7 +93,7 @@ class ClientErrorTests(unittest.TestCase):
         with mock.patch(
             "valorant.henrik.urlopen", side_effect=[error, _response({"status": 200, "data": {"ok": True}})],
         ), mock.patch("valorant.henrik.time.sleep"):
-            data = HenrikClient("key", min_interval=0).account("Axel", "EUW")
+            data = HenrikClient("key", min_interval=0).account("JoueurTest", "TEST")
         self.assertEqual(data, {"ok": True})
 
 

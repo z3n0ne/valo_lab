@@ -140,7 +140,47 @@ Aucune donnée n'est envoyée ailleurs qu'à l'API HenrikDev, en lecture seule.
 
 ---
 
-## 6. Tests
+## 6. Publier le projet sur GitHub sans exposer ta clé
+
+Le dépôt peut être public : **rien de personnel n'est versionné**.
+
+Le `.gitignore` exclut explicitement :
+
+| Chemin | Contenu sensible |
+| --- | --- |
+| `data/` | tout le dossier de données local |
+| `data/config.json` | Riot ID, région **et clé API HenrikDev en clair** |
+| `data/*.db`, `*.db` | historique de parties, PUUID, profil |
+| `.env`, `secrets.json`, `config.json` | secrets éventuels à la racine |
+
+Garde-fous déjà en place :
+
+- la clé **n'est jamais renvoyée au navigateur** (`public_config()` expose
+  seulement `has_api_key`) ;
+- `data/config.json` est écrit avec les permissions `0600` ;
+- la variable d'environnement `HENRIK_API_KEY` permet de ne jamais écrire la clé
+  sur disque ;
+- une suite de tests vérifie l'index git (fichiers ignorés, aucune clé commitée) :
+
+```bash
+python3 -m unittest tests.test_repository_hygiene -v
+```
+
+Avant chaque `git push`, un réflexe de 5 secondes :
+
+```bash
+git status --short                 # data/ ne doit jamais apparaître
+git ls-files | grep -E '^data/|\.db$|config\.json'   # doit ne rien renvoyer
+```
+
+> **Si un secret a déjà été commité**, le supprimer du dernier commit ne suffit
+> pas : il reste dans l'historique. Révoque la clé HenrikDev immédiatement,
+> puis réécris l'historique (`git filter-repo` ou `BFG Repo-Cleaner`) avant de
+> pousser. Une clé publiée doit être considérée comme compromise.
+
+---
+
+## 7. Tests
 
 ```bash
 python3 -m unittest discover -s tests -v
@@ -157,13 +197,15 @@ La suite couvre :
 - `tests/test_henrik.py` — construction des requêtes, en-tête d'authentification,
   erreurs 401/404/429 et reprises réseau (réseau simulé) ;
 - `tests/test_api.py` — serveur HTTP réel sur un port éphémère : endpoints JSON,
-  réglages, blocage du path traversal, effacement/rechargement de la démo.
+  réglages, blocage du path traversal, effacement/rechargement de la démo ;
+- `tests/test_repository_hygiene.py` — vérifie que `data/`, les bases SQLite et
+  les fichiers de secrets sont bien ignorés et qu'aucune clé n'est versionnée.
 
 Aucun test ne contacte le réseau ni ne touche à `./data`.
 
 ---
 
-## 7. Dépannage
+## 8. Dépannage
 
 | Symptôme | Cause probable / solution |
 | --- | --- |
@@ -177,7 +219,7 @@ Aucun test ne contacte le réseau ni ne touche à `./data`.
 
 ---
 
-## 8. Structure du projet
+## 9. Structure du projet
 
 ```
 app.py                  # lanceur : port, navigateur, sync auto, seed de démo

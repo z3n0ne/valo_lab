@@ -143,14 +143,14 @@ class ApiTests(unittest.TestCase):
         status, data = self.request(
             "POST",
             "/api/settings",
-            {"riot_name": "Axel", "riot_tag": "EUW", "region": "eu", "platform": "pc", "api_key": "secret-123"},
+            {"riot_name": "JoueurTest", "riot_tag": "TEST", "region": "eu", "platform": "pc", "api_key": "fake-key-for-tests"},
         )
         self.assertEqual(status, 200)
         self.assertTrue(data["configured"])
         self.assertTrue(data["config"]["has_api_key"])
-        self.assertNotIn("secret-123", json.dumps(data))
+        self.assertNotIn("fake-key-for-tests", json.dumps(data))
         stored = json.loads((Path(TMP_DATA) / "config.json").read_text())
-        self.assertEqual(stored["api_key"], "secret-123")
+        self.assertEqual(stored["api_key"], "fake-key-for-tests")
         mode = os.stat(Path(TMP_DATA) / "config.json").st_mode & 0o777
         self.assertEqual(mode, 0o600, "the config file contains the API key and must stay private")
 

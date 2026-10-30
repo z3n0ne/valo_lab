@@ -1,14 +1,35 @@
-# Données locales (config + clé API + base SQLite)
+# ---------------------------------------------------------------------------
+# Secrets et données personnelles — ne JAMAIS versionner
+# ---------------------------------------------------------------------------
+# data/ contient config.json (Riot ID + clé API HenrikDev, en clair) et la base
+# SQLite (historique de parties, PUUID). Ces fichiers restent sur la machine.
 data/
+data/config.json
+data/*.db
+data/*.db-shm
+data/*.db-wal
 
+# Fichiers de configuration / secrets éventuels à la racine
+config.json
+.env
+.env.*
+secrets.json
+
+# Bases SQLite égarées
+*.db
+*.db-shm
+*.db-wal
+
+# ---------------------------------------------------------------------------
 # Python
+# ---------------------------------------------------------------------------
 __pycache__/
 *.py[cod]
 .venv/
 venv/
 
-# macOS
-.DS_Store
-
+# ---------------------------------------------------------------------------
 # Divers
+# ---------------------------------------------------------------------------
+.DS_Store
 *.log
