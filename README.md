@@ -1,3 +1,5 @@
+*projet assiste par IA*
+
 # VALO//LAB — dashboard local de performances VALORANT
 
 Tableau de bord local qui récupère ton historique de parties VALORANT (via l'API
