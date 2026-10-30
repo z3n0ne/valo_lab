@@ -91,7 +91,6 @@ Clique sur **Tester la connexion** pour valider le Riot ID et la clé, puis sur
 ## 4. Lancement et rafraîchissement
 
 ```bash
-cd ~/Projets/dashboard_valorant
 python3 app.py
 ```
 
@@ -203,5 +202,5 @@ L'interface n'utilise ni framework ni bundler : `static/app.js` et
 
 ---
 
-Projet personnel, non affilié à Riot Games. VALORANT est une marque de Riot Games, Inc.
+Projet personnel, vibe codé à des fins pédagogiques, non affilié à Riot Games. VALORANT est une marque de Riot Games, Inc.
 Les données proviennent de l'API communautaire HenrikDev.
