@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0a1017">
+  <title>VALO//LAB — Dashboard Valorant</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <div class="backdrop" aria-hidden="true">
+    <div class="backdrop-grid"></div>
+    <div class="backdrop-glow"></div>
+  </div>
+
+  <header class="topbar">
+    <a class="brand" href="#overview" aria-label="VALO LAB, accueil">
+      <span class="brand-mark">V</span>
+      <span class="brand-text">VALO<span class="brand-slashes">//</span>LAB</span>
+    </a>
+
+    <nav class="tabs" id="tabs" aria-label="Navigation principale">
+      <button class="tab is-active" data-tab="overview"><span class="tab-full">Vue d'ensemble</span><span class="tab-short">Vue</span></button>
+      <button class="tab" data-tab="agents">Agents</button>
+      <button class="tab" data-tab="maps">Maps</button>
+      <button class="tab" data-tab="sides"><span class="tab-full">Attaque / Défense</span><span class="tab-short">Côtés</span></button>
+      <button class="tab" data-tab="matches">Parties</button>
+    </nav>
+
+    <div class="top-actions">
+      <div class="sync-pill" id="sync-pill" data-state="idle">
+        <span class="sync-dot"></span>
+        <span id="sync-label">Prêt</span>
+      </div>
+      <button class="btn btn-primary btn-sync" id="sync-btn" type="button">
+        <span class="btn-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24"><path d="M20 11a8 8 0 1 0-2.34 5.66M20 4v7h-7" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"/></svg>
+        </span>
+        <span class="btn-label">Synchroniser</span>
+      </button>
+      <button class="icon-btn" id="settings-btn" type="button" aria-label="Ouvrir les réglages" title="Réglages">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 15.2a3.2 3.2 0 1 0 0-6.4 3.2 3.2 0 0 0 0 6.4Z" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.86 2.86-.06-.06a1.7 1.7 0 0 0-1.88-.34 1.7 1.7 0 0 0-1.03 1.56V21h-4.04v-.08A1.7 1.7 0 0 0 8.9 19.36a1.7 1.7 0 0 0-1.88.34l-.06.06-2.86-2.86.06-.06A1.7 1.7 0 0 0 4.5 15a1.7 1.7 0 0 0-1.56-1.03H3v-4.04h.08A1.7 1.7 0 0 0 4.64 8.9a1.7 1.7 0 0 0-.34-1.88L4.24 6.96 7.1 4.1l.06.06A1.7 1.7 0 0 0 9 4.5a1.7 1.7 0 0 0 1.03-1.56V3h4.04v.08A1.7 1.7 0 0 0 15.1 4.64a1.7 1.7 0 0 0 1.88-.34l.06-.06 2.86 2.86-.06.06A1.7 1.7 0 0 0 19.5 9c.16.62.66 1.03 1.42 1.03H21v4.04h-.08A1.7 1.7 0 0 0 19.4 15Z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/></svg>
+      </button>
+    </div>
+  </header>
+
+  <div class="notice-stack" id="notice-stack"></div>
+
+  <main class="app" id="app">
+    <div class="loading-screen">
+      <div class="loader"></div>
+      <p>Chargement de tes statistiques…</p>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <span>VALO//LAB · dashboard local · données via l'API non officielle HenrikDev</span>
+    <span>Non affilié à Riot Games. Tes données restent sur ton Mac.</span>
+  </footer>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <dialog class="settings-dialog" id="settings-dialog">
+    <form class="settings-form" id="settings-form" method="dialog">
+      <div class="dialog-head">
+        <div>
+          <p class="eyebrow">Connexion du compte</p>
+          <h2>Réglages</h2>
+        </div>
+        <button class="icon-btn" type="button" id="settings-close" aria-label="Fermer les réglages">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m6 6 12 12M18 6 6 18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="square"/></svg>
+        </button>
+      </div>
+
+      <div class="form-grid">
+        <label class="field">
+          <span>Nom Riot</span>
+          <input name="riot_name" id="field-name" type="text" autocomplete="off" spellcheck="false" placeholder="TenZ">
+        </label>
+        <label class="field">
+          <span>Tag</span>
+          <input name="riot_tag" id="field-tag" type="text" autocomplete="off" spellcheck="false" placeholder="NA1">
+        </label>
+        <label class="field">
+          <span>Région</span>
+          <select name="region" id="field-region">
+            <option value="eu">Europe (eu)</option>
+            <option value="na">Amérique du Nord (na)</option>
+            <option value="ap">Asie-Pacifique (ap)</option>
+            <option value="kr">Corée (kr)</option>
+            <option value="latam">Amérique latine (latam)</option>
+            <option value="br">Brésil (br)</option>
+          </select>
+        </label>
+        <label class="field">
+          <span>Plateforme</span>
+          <select name="platform" id="field-platform">
+            <option value="pc">PC</option>
+            <option value="console">Console</option>
+          </select>
+        </label>
+        <label class="field field-wide">
+          <span>Clé API HenrikDev</span>
+          <div class="input-with-action">
+            <input name="api_key" id="field-key" type="password" autocomplete="off" spellcheck="false" placeholder="Coller la clé ici">
+            <button class="mini-btn" type="button" id="toggle-key">Afficher</button>
+          </div>
+          <small>Laisse vide pour conserver la clé déjà enregistrée. Elle reste stockée en local, jamais affichée en clair.</small>
+        </label>
+        <label class="field field-wide">
+          <span>Profondeur d'historique</span>
+          <select name="backfill" id="field-backfill">
+            <option value="20">20 dernières parties</option>
+            <option value="40">40 dernières parties</option>
+            <option value="60">60 dernières parties</option>
+            <option value="100">100 dernières parties</option>
+          </select>
+          <small>Une synchronisation complète peut être lancée depuis la section Données.</small>
+        </label>
+      </div>
+
+      <div class="api-help">
+        <div class="api-help-title">Obtenir une clé gratuite (30 req/min)</div>
+        <ol>
+          <li>Rejoins le Discord HenrikDev et vérifie ton compte.</li>
+          <li>Dans <code>#get-a-key</code>, choisis <strong>VALORANT (Basic Key)</strong>.</li>
+          <li>Colle la clé ci-dessus, puis clique sur « Tester la connexion ».</li>
+        </ol>
+        <a href="https://api.henrikdev.xyz/dashboard/" target="_blank" rel="noreferrer">Ouvrir le dashboard HenrikDev ↗</a>
+      </div>
+
+      <div class="form-actions">
+        <button class="btn btn-ghost" type="button" id="test-btn">Tester la connexion</button>
+        <div class="spacer"></div>
+        <button class="btn btn-secondary" type="submit" id="save-btn">Enregistrer</button>
+        <button class="btn btn-primary" type="button" id="save-sync-btn">Enregistrer &amp; synchroniser</button>
+      </div>
+      <p class="form-feedback" id="settings-feedback" aria-live="polite"></p>
+
+      <div class="data-zone">
+        <div>
+          <h3>Données locales</h3>
+          <p id="data-summary">—</p>
+        </div>
+        <div class="data-actions">
+          <button class="btn btn-ghost btn-small" type="button" id="full-sync-btn">Récupérer plus d'historique</button>
+          <button class="btn btn-danger btn-small" type="button" id="clear-demo-btn">Effacer la démo</button>
+        </div>
+      </div>
+
+      <p class="legal">Données fournies par l'API communautaire HenrikDev. VALO//LAB n'est pas affilié à Riot Games. La clé API et l'historique restent sur cet ordinateur.</p>
+    </form>
+  </dialog>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

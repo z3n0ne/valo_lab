@@ -1,0 +1,14 @@
+# Données locales (config + clé API + base SQLite)
+data/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# macOS
+.DS_Store
+
+# Divers
+*.log
