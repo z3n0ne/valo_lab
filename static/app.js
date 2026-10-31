@@ -493,7 +493,8 @@
     const s = state.stats.summary;
     const profile = profileInfo();
     const lastSync = state.boot && state.boot.sync ? state.boot.sync.last_sync : null;
-    const heroArt = mediaUrl("card", profile.card) || "/static/logo.jpg";
+    const cardArt = mediaUrl("card", profile.card);
+    const heroArt = cardArt || "/static/logo.png";
     const rank = rankBadge(profile);
 
     const kpi = [
@@ -511,7 +512,7 @@
     const verdict = sideVerdict(atk, dfn);
 
     return (
-      '<section class="hero" style="--hero-art:url(\'' + esc(heroArt) + '\')">' +
+      '<section class="hero' + (cardArt ? "" : " hero-logo-card") + '" style="--hero-art:url(\'' + esc(heroArt) + '\')">' +
       '<div class="hero-main">' +
       '<p class="eyebrow">Rapport de performance · ' + esc(modeText()) + "</p>" +
       "<h1>" + esc(profile.name || "Joueur") +
