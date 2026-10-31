@@ -123,11 +123,32 @@ Options utiles :
 
 ```bash
 python3 app.py --port 9000        # changer le port
+python3 app.py --host 0.0.0.0     # écouter sur le réseau local
 python3 app.py --no-browser       # ne pas ouvrir le navigateur
 python3 app.py --no-sync          # ne pas synchroniser au démarrage
 ```
 
-Le serveur n'écoute que sur `127.0.0.1` : il n'est pas accessible depuis le réseau.
+Le serveur n'écoute que sur `127.0.0.1` par défaut : il n'est pas accessible
+depuis le réseau. Pour un accès direct sur le LAN, utilise `--host 0.0.0.0`
+(voir la section NAS ci-dessous pour l'hébergement permanent).
+
+### Héberger en permanence sur un NAS
+
+Le dépôt inclut un `Dockerfile` et un `docker-compose.yml` prêts pour un NAS
+Synology (Container Manager), QNAP, TrueNAS ou Unraid. Guide détaillé :
+[`deploy/NAS.md`](deploy/NAS.md).
+
+```bash
+cp env.example .env      # facultatif : port, fuseau horaire, chemin des données
+docker compose up -d --build
+```
+
+Puis ouvre `http://IP_DU_NAS:8765` depuis un autre appareil du réseau. Les
+données restent dans `./data`, et le conteneur redémarre automatiquement.
+
+> Le dashboard n'a pas d'authentification : garde-le sur le réseau local, sans
+> redirection de port depuis Internet. Pour un accès à distance, utilise
+> Tailscale/WireGuard ou un reverse proxy avec authentification.
 
 ### Mode démo
 
@@ -199,6 +220,11 @@ Aucun test ne contacte le réseau ni ne touche à `./data`.
 
 ```
 app.py                  # lanceur : port, navigateur, sync auto, seed de démo
+Dockerfile              # image Python pour un déploiement NAS / serveur
+docker-compose.yml      # service persistant (volume ./data, restart auto)
+env.example             # modèle de variables pour docker compose
+deploy/
+└── NAS.md              # guide Synology / QNAP / TrueNAS / Unraid
 valorant/
 ├── config.py           # chemins, lecture/écriture de config.json (0600)
 ├── db.py               # schéma SQLite et requêtes

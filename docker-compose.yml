@@ -1,0 +1,16 @@
+version: "3.9"
+
+services:
+  valolab:
+    build:
+      context: .
+    image: valolab:local
+    container_name: valolab
+    restart: unless-stopped
+    ports:
+      - "${VALO_PORT:-8765}:8765"
+    environment:
+      TZ: "${TZ:-Europe/Paris}"
+      VALO_DATA_DIR: /data
+    volumes:
+      - "${VALO_DATA_PATH:-./data}:/data"

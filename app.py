@@ -3,7 +3,8 @@
 
     python3 app.py
 
-The server listens on 127.0.0.1 only; data stays in ./data.
+The server listens on 127.0.0.1 by default; use ``--host 0.0.0.0`` to expose it
+on the local network (Docker does this automatically). Data stays in ./data.
 """
 from __future__ import annotations
 
