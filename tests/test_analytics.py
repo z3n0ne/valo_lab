@@ -132,6 +132,7 @@ class SummaryTests(AnalyticsTestCase):
         self.assertEqual(data["summary"]["matches"], 0)
         self.assertEqual(data["agents"], [])
         self.assertEqual(data["maps"], [])
+        self.assertIsNone(data["highlight"])
         self.assertEqual(len(data["insights"]), 1)
         self.assertEqual(data["insights"][0]["tag"], "DONNÉES")
 
@@ -180,6 +181,33 @@ class SummaryTests(AnalyticsTestCase):
             self.assertIsInstance(row["impact"], (int, float))
             self.assertIn("attack", row)
             self.assertIn("defense", row)
+
+    def test_map_drill_down_lists_agents_for_that_map(self):
+        self.seed_four_matches()
+        ascent = {m["name"]: m for m in compute(self.db)["maps"]}["Ascent"]
+        self.assertEqual([a["name"] for a in ascent["agents"]], ["Omen"])
+        self.assertEqual(ascent["agents"][0]["matches"], 2)
+        self.assertEqual(ascent["agents"][0]["impact"], 100.0)
+
+        self.add_match("m5", "Jett", "Ascent", 1, 13, 8, 25, 10, 4, 5200, 2600, 9, 4)
+        ascent = {m["name"]: m for m in compute(self.db)["maps"]}["Ascent"]
+        agents = {a["name"]: a for a in ascent["agents"]}
+        self.assertEqual(set(agents), {"Omen", "Jett"})
+        self.assertEqual(agents["Jett"]["matches"], 1)
+        self.assertEqual(ascent["agents"][0]["name"], "Jett")
+        self.assertGreater(ascent["agents"][0]["impact"], 100)
+        self.assertLess(agents["Omen"]["impact"], 100)
+
+    def test_highlight_is_the_highest_acs_game(self):
+        self.seed_four_matches()
+        data = compute(self.db)
+        highlight = data["highlight"]
+        self.assertIsNotNone(highlight)
+        self.assertEqual(highlight["match_id"], "m1")
+        self.assertEqual(highlight["acs"], max(card["acs"] for card in data["recent"]))
+        self.assertIn("agent", highlight)
+        self.assertIn("score", highlight)
+        self.assertIn("kd", highlight)
 
     def test_mode_filter_excludes_deathmatch(self):
         self.seed_four_matches()

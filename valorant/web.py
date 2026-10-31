@@ -184,7 +184,7 @@ class DashboardHandler(BaseHTTPRequestHandler):
                 body = self._read_json()
                 old = load_config()
                 updates: Dict[str, Any] = {}
-                for key in ("riot_name", "riot_tag", "region", "platform", "backfill"):
+                for key in ("riot_name", "riot_tag", "region", "platform", "backfill", "queue_mode"):
                     if key in body:
                         updates[key] = body[key]
                 if "api_key" in body and str(body.get("api_key") or "").strip():
@@ -198,6 +198,10 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     for key in ("riot_name", "riot_tag", "region")
                 )
                 cfg = save_config(updates)
+                queue_mode_changed = cfg.get("queue_mode") != old.get("queue_mode")
+                purged = 0
+                if queue_mode_changed and cfg.get("queue_mode") == "competitive":
+                    purged = self.app.db.delete_non_competitive()
                 if identity_changed and self.app.db.count_matches(demo=False) > 0:
                     self.app.db.delete_real()
                     self.app.db.delete_meta("last_sync")
@@ -206,6 +210,8 @@ class DashboardHandler(BaseHTTPRequestHandler):
                     {
                         "ok": True,
                         "identity_changed": identity_changed,
+                        "queue_mode_changed": queue_mode_changed,
+                        "purged": purged,
                         "configured": is_configured(cfg),
                         "config": public_config(cfg),
                         "bootstrap": self._bootstrap(),

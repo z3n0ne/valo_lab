@@ -90,6 +90,13 @@ class DemoDatasetTests(unittest.TestCase):
             )
         self.assertEqual(first_rows, second_rows)
 
+    def test_demo_only_contains_competitive_matches(self):
+        seed_demo(self.db)
+        matches = self.db.query_matches(mode="all", days=0)
+        self.assertTrue(matches)
+        self.assertEqual({m["queue_id"] for m in matches}, {"competitive"})
+        self.assertEqual({m["queue_name"] for m in matches}, {"Competitive"})
+
     def test_demo_profile_is_flagged(self):
         seed_demo(self.db)
         profile = self.db.get_meta("profile") or {}

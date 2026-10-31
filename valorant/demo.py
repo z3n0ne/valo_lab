@@ -52,7 +52,7 @@ def _round_shots(rng: random.Random) -> tuple:
     return headshots, bodyshots, legshots
 
 
-def _sample_match(rng: random.Random, idx: int, started_at: datetime) -> tuple:
+def _sample_match(rng: random.Random, idx: int, started_at: datetime, competitive_only: bool = True) -> tuple:
     map_name = _pick(rng, {name: data["weight"] for name, data in MAPS.items()})
     agent_name = _pick(rng, {name: data["weight"] for name, data in AGENTS.items()})
     map_profile = MAPS[map_name]
@@ -144,8 +144,14 @@ def _sample_match(rng: random.Random, idx: int, started_at: datetime) -> tuple:
         if max(my_score, enemy_score) >= 13 and abs(diff) >= 2:
             break
 
-    queue_id = "unrated" if rng.random() < 0.13 else "competitive"
-    queue_name = "Unrated" if queue_id == "unrated" else "Competitive"
+    # The draw is kept even in competitive-only mode so the rest of the
+    # deterministic sequence stays stable.
+    drawn_queue = rng.random()
+    if competitive_only:
+        queue_id, queue_name = "competitive", "Competitive"
+    else:
+        queue_id = "unrated" if drawn_queue < 0.13 else "competitive"
+        queue_name = "Unrated" if queue_id == "unrated" else "Competitive"
     match_row = {
         "match_id": f"demo-{idx:04d}",
         "started_at": started_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -178,7 +184,7 @@ def _sample_match(rng: random.Random, idx: int, started_at: datetime) -> tuple:
     return match_row, rounds
 
 
-def seed_demo(db: Database, count: int = 90) -> int:
+def seed_demo(db: Database, count: int = 90, competitive_only: bool = True) -> int:
     if db.count_matches() > 0 or db.get_meta("demo_dismissed"):
         return 0
     rng = random.Random(20262561)
@@ -191,7 +197,7 @@ def seed_demo(db: Database, count: int = 90) -> int:
         offset = offset.replace(hour=rng.randint(17, 23), minute=rng.randint(0, 59))
         if offset > now:
             offset = now - timedelta(hours=rng.randint(1, 30))
-        match, rounds = _sample_match(rng, idx, offset)
+        match, rounds = _sample_match(rng, idx, offset, competitive_only=competitive_only)
         db.upsert_match(match, rounds)
         inserted += 1
 

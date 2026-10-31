@@ -97,6 +97,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn("has_api_key", data["config"])
         self.assertFalse(data["config"]["has_api_key"], "the API key must never leak to the browser")
         self.assertNotIn("api_key", data["config"])
+        self.assertEqual(data["config"]["queue_mode"], "competitive")
 
     def test_stats_payload(self):
         status, data = self.request("GET", "/api/stats?mode=tactical&days=90")
@@ -139,20 +140,56 @@ class ApiTests(unittest.TestCase):
         conn.close()
         self.assertEqual(response.status, 400)
 
+    def test_queue_mode_switch_purges_non_competitive_matches(self):
+        # The config is shared by the class: force a known starting point so the
+        # test does not depend on the alphabetical execution order.
+        config_mod.save_config({"queue_mode": "competitive"})
+        self.db.upsert_match(
+            {
+                "match_id": "real-unrated",
+                "started_at": "2026-10-01T00:00:00Z",
+                "queue_id": "unrated",
+                "queue_name": "Unrated",
+                "is_demo": 0,
+                "synced_at": "2026-10-01T00:00:00Z",
+            },
+            [],
+        )
+        self.addCleanup(self.db.delete_real)
+        status, data = self.request("POST", "/api/settings", {"queue_mode": "tactical"})
+        self.assertEqual(status, 200)
+        self.assertTrue(data["queue_mode_changed"])
+        self.assertEqual(data["purged"], 0)
+        self.assertEqual(self.db.count_matches(demo=False), 1)
+
+        status, data = self.request("POST", "/api/settings", {"queue_mode": "competitive"})
+        self.assertEqual(status, 200)
+        self.assertTrue(data["queue_mode_changed"])
+        self.assertEqual(data["purged"], 1)
+        self.assertEqual(self.db.count_matches(demo=False), 0)
+
     def test_settings_are_saved_and_key_is_hidden(self):
+        # Same reason as above: start from the default queue mode.
+        config_mod.save_config({"queue_mode": "competitive"})
         status, data = self.request(
             "POST",
             "/api/settings",
-            {"riot_name": "JoueurTest", "riot_tag": "TEST", "region": "eu", "platform": "pc", "api_key": "fake-key-for-tests"},
+            {"riot_name": "JoueurTest", "riot_tag": "TEST", "region": "eu", "platform": "pc", "api_key": "fake-key-for-tests", "queue_mode": "tactical"},
         )
         self.assertEqual(status, 200)
         self.assertTrue(data["configured"])
         self.assertTrue(data["config"]["has_api_key"])
+        self.assertEqual(data["config"]["queue_mode"], "tactical")
+        self.assertTrue(data["queue_mode_changed"])
         self.assertNotIn("fake-key-for-tests", json.dumps(data))
         stored = json.loads((Path(TMP_DATA) / "config.json").read_text())
         self.assertEqual(stored["api_key"], "fake-key-for-tests")
+        self.assertEqual(stored["queue_mode"], "tactical")
         mode = os.stat(Path(TMP_DATA) / "config.json").st_mode & 0o777
         self.assertEqual(mode, 0o600, "the config file contains the API key and must stay private")
+
+        # Restore the default for the other API tests.
+        self.request("POST", "/api/settings", {"queue_mode": "competitive"})
 
     def test_demo_can_be_cleared_and_reseeded(self):
         status, data = self.request("POST", "/api/demo/clear", {})

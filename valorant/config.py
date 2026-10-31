@@ -13,6 +13,9 @@ DB_PATH = DATA_DIR / "valorant.db"
 
 REGIONS = ["eu", "na", "ap", "kr", "latam", "br"]
 PLATFORMS = ["pc", "console"]
+# "competitive": only ranked games are stored. "tactical": every queue is
+# stored (the analytics "tactical" filter still hides non-tactical modes).
+QUEUE_MODES = ["competitive", "tactical"]
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "riot_name": "",
@@ -21,6 +24,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "platform": "pc",
     "api_key": "",
     "backfill": 40,
+    "queue_mode": "competitive",
 }
 
 
@@ -62,6 +66,9 @@ def save_config(updates: Dict[str, Any]) -> Dict[str, Any]:
         cfg["backfill"] = max(10, min(100, int(cfg.get("backfill", 40))))
     except (TypeError, ValueError):
         cfg["backfill"] = 40
+    cfg["queue_mode"] = str(cfg.get("queue_mode", "competitive")).strip().lower()
+    if cfg["queue_mode"] not in QUEUE_MODES:
+        cfg["queue_mode"] = "competitive"
     cfg["api_key"] = str(cfg.get("api_key", "")).strip()
 
     ensure_data_dir()
@@ -81,6 +88,7 @@ def public_config(cfg: Dict[str, Any]) -> Dict[str, Any]:
         "region": cfg.get("region", "eu"),
         "platform": cfg.get("platform", "pc"),
         "backfill": cfg.get("backfill", 40),
+        "queue_mode": cfg.get("queue_mode", "competitive"),
         "has_api_key": bool(cfg.get("api_key")),
     }
 

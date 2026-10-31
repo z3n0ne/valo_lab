@@ -28,6 +28,26 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def match_queue_id(raw: Dict[str, Any]) -> str:
+    """Return the queue id carried by a v4 match payload ("" when unknown)."""
+    metadata = raw.get("metadata") or {}
+    queue = metadata.get("queue") or {}
+    if isinstance(queue, dict):
+        queue = queue.get("id") or ""
+    return str(queue).strip().lower()
+
+
+def keep_queue(raw: Dict[str, Any], queue_mode: str) -> bool:
+    """Keep competitive-only payloads when the config asks for ranked games.
+
+    An unknown queue is kept so the caller can inspect the full match payload
+    instead of silently dropping a valid game.
+    """
+    if queue_mode != "competitive":
+        return True
+    return match_queue_id(raw) in ("", "competitive")
+
+
 def profile_from_account(account: Dict[str, Any]) -> Dict[str, Any]:
     return {
         "name": account.get("name") or "",
@@ -152,9 +172,16 @@ class SyncManager:
                 # Unranked / MMR unavailable is not fatal.
                 pass
 
+            queue_mode = cfg.get("queue_mode", "competitive")
             existing = self.db.existing_ids()
-            pages = max(1, math.ceil(int(cfg["backfill"]) / 10))
+            target = int(cfg["backfill"])
+            base_pages = max(1, math.ceil(target / 10))
+            # Competitive-only syncs skip unranked games, so scan more history to
+            # still collect the requested number of ranked matches.
+            pages = min(base_pages * 2, 20) if queue_mode == "competitive" else base_pages
             new_count = 0
+            skipped = 0
+            scanned = 0
             known_found = False
 
             for page in range(pages):
@@ -166,16 +193,25 @@ class SyncManager:
                 batch = client.matches(region, platform, name, tag, start=page * 10, size=10)
                 if not batch:
                     break
+                scanned += 1
                 for raw in batch:
                     metadata = raw.get("metadata") or {}
                     match_id = metadata.get("match_id")
                     if not match_id:
+                        continue
+                    if not keep_queue(raw, queue_mode):
+                        skipped += 1
                         continue
                     if match_id in existing and not full:
                         known_found = True
                         continue
                     if not raw.get("rounds") or not raw.get("players"):
                         raw = client.match(region, match_id)
+                    # The list payload may omit the queue: check again on the
+                    # detailed match before storing it.
+                    if not keep_queue(raw, queue_mode):
+                        skipped += 1
+                        continue
                     parsed = normalize_match(raw, puuid)
                     if not parsed:
                         continue
@@ -198,11 +234,17 @@ class SyncManager:
                 if new_count
                 else "Déjà à jour"
             )
+            if skipped:
+                message += (
+                    f" · {skipped} partie{'s' if skipped > 1 else ''} hors compétitif "
+                    f"ignorée{'s' if skipped > 1 else ''}"
+                )
+            done = max(1, scanned)
             self._update(
                 state="success",
                 message=message,
-                progress=pages,
-                total=pages,
+                progress=done,
+                total=done,
                 new_matches=new_count,
                 finished_at=_now_iso(),
                 error=None,

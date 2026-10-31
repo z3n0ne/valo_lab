@@ -5,7 +5,8 @@
 Tableau de bord local qui récupère ton historique de parties VALORANT (via l'API
 communautaire HenrikDev) et le transforme en statistiques lisibles : KDA, ACS,
 ADR, win rate par agent, par map et par côté attaque / défense, avec une lecture
-automatique de tes points forts et des axes à travailler.
+automatique de tes points forts et des axes à travailler. Par défaut, seules les
+parties **compétitives** sont importées, pour garder des statistiques comparables.
 
 Tout tourne sur ta machine. Pas de compte à créer, pas de serveur distant, pas de
 Node : un seul processus Python et une base SQLite dans `./data`.
@@ -22,12 +23,12 @@ python3 app.py
 | --- | --- |
 | **Vue d'ensemble** | WR, K/D, KDA, ACS, ADR, HS %, rounds, tendance ACS/partie, forces & faiblesses, 10 dernières parties |
 | **Agents** | Win rate, K/D, KDA, ACS, ADR, HS %, WR attaque / défense et indice de performance par agent |
-| **Maps** | Même chose par map + graphique de win rate |
+| **Maps** | Même chose par map + graphique de win rate ; clique sur une map pour voir tes stats agent par agent sur cette map |
 | **Attaque / Défense** | Win rate de round par côté, K/D et ACS par côté, écart par map et par agent |
-| **Parties** | Historique filtrable (map, agent, file) avec score, K/D/A, ACS et rounds gagnés par côté |
+| **Parties** | Encart « Meilleure partie » (plus haut ACS) + historique filtrable (map, agent, file) avec score, K/D/A, ACS et rounds gagnés par côté |
 
-Filtres disponibles partout : **mode** (tactique / toutes / file précise) et
-**période** (30 jours, 90 jours, 6 mois, tout).
+Filtres disponibles partout : **mode** (compétitif / tactique / toutes / file
+précise) et **période** (30 jours, 90 jours, 6 mois, tout).
 
 ### Comment sont calculés les indicateurs
 
@@ -38,6 +39,11 @@ Filtres disponibles partout : **mode** (tactique / toutes / file précise) et
 - **Indice** : 45 % ACS + 30 % K/D + 25 % win rate, ramené sur une échelle où
   100 = ta moyenne. Il sert uniquement à classer les agents et les maps entre eux ;
   les petits échantillons sont signalés par une pastille de fiabilité.
+- **Détail d'une map** : le même indice est recalculé pour chaque agent par
+  rapport à ta moyenne **sur cette map**, afin de répondre à « quel agent marche
+  le mieux ici pour moi ? ».
+- **Meilleure partie** : la partie de la période avec le plus haut ACS (départage
+  par le nombre de kills). Elle reste visible même si elle sort des 60 dernières.
 - **Forces & faiblesses** : le moteur compare chaque agent, map et côté à ta moyenne,
   pondère l'écart par la taille de l'échantillon, puis propose une action concrète.
   Une faiblesse n'est affichée que si elle a assez de rounds ou de parties derrière elle.
@@ -77,8 +83,12 @@ Ouvre ensuite le dashboard, clique sur l'icône ⚙ (en haut à droite) et rense
 - **Région** : `eu`, `na`, `ap`, `kr`, `latam` ou `br`.
 - **Plateforme** : `PC` (ou `Console`).
 - **Clé API HenrikDev**.
+- **Files récupérées** : **Compétitif uniquement** par défaut, ou toutes les
+  files. Repasser en compétitif supprime les parties non compétitives déjà
+  stockées (elles restent consultables tant que tu ne changes pas ce réglage).
 - **Profondeur d'historique** : nombre de parties récentes à récupérer à chaque
-  synchronisation (40 par défaut, 100 maximum).
+  synchronisation (40 par défaut, 100 maximum). En mode compétitif, le scan
+  remonte plus loin pour compenser les parties non classées.
 
 Clique sur **Tester la connexion** pour valider le Riot ID et la clé, puis sur
 **Enregistrer & synchroniser**.
@@ -122,10 +132,10 @@ Le serveur n'écoute que sur `127.0.0.1` : il n'est pas accessible depuis le ré
 ### Mode démo
 
 Sans Riot ID configuré, le dashboard génère au premier lancement un jeu de
-**90 parties fictives** (déterministe) pour que tous les écrans soient utilisables
-immédiatement. Ces données sont clairement signalées par un bandeau. Elles sont
-supprimées automatiquement à la première vraie synchronisation, ou manuellement
-via `Effacer la démo`.
+**90 parties fictives** (déterministe, toutes compétitives) pour que tous les
+écrans soient utilisables immédiatement. Ces données sont clairement signalées
+par un bandeau. Elles sont supprimées automatiquement à la première vraie
+synchronisation, ou manuellement via `Effacer la démo`.
 
 ---
 
@@ -133,7 +143,7 @@ via `Effacer la démo`.
 
 ```
 data/
-├── config.json     # Riot ID, région, profondeur d'historique, clé API (0600)
+├── config.json     # Riot ID, région, file (compétitif/tactique), clé API (0600)
 └── valorant.db     # base SQLite : parties, rounds, profil
 ```
 
@@ -193,9 +203,13 @@ La suite couvre :
 - `tests/test_parser.py` — normalisation des parties v4 et attribution du côté
   attaque/défense (rôle de l'équipe gagnante, plant, defuse, kill feed) ;
 - `tests/test_analytics.py` — agrégations globales / agents / maps / côtés,
-  filtres de mode et de période, génération des insights ;
+  filtres de mode et de période, détail map × agent, meilleure partie et
+  génération des insights ;
+- `tests/test_sync.py` — filtrage compétitif des parties et pagination
+  (client HenrikDev simulé) ;
+- `tests/test_db.py` — nettoyage des parties non compétitives dans SQLite ;
 - `tests/test_demo.py` — déterminisme et cohérence du jeu de démonstration
-  (scores VALORANT valides, rounds, dates passées) ;
+  (scores VALORANT valides, rounds, dates passées, files compétitives) ;
 - `tests/test_henrik.py` — construction des requêtes, en-tête d'authentification,
   erreurs 401/404/429 et reprises réseau (réseau simulé) ;
 - `tests/test_api.py` — serveur HTTP réel sur un port éphémère : endpoints JSON,
@@ -235,7 +249,7 @@ valorant/
 ├── demo.py             # jeu de données de démonstration déterministe
 ├── web.py              # serveur HTTP local + API JSON
 └── version.py
-static/                 # HTML / CSS / JS sans build, polices auto-hébergées
+static/                 # HTML / CSS / JS sans build, polices et logo auto-hébergés
 tests/                  # suite unittest
 data/                   # créé au premier lancement (non versionné)
 ```

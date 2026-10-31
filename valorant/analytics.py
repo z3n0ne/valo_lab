@@ -426,8 +426,19 @@ def compute(db: Database, mode: str = "tactical", days: int = 90) -> Dict[str, A
                 "acc": _empty_acc(),
                 "id": map_key,
                 "name": match.get("map_name") or "Inconnue",
+                "agents": {},
             }
         _add_match(map_accs[map_key]["acc"], match, rounds)
+
+        # Cross-tab map x agent: which agents actually perform on each map.
+        map_agents = map_accs[map_key]["agents"]
+        if agent_key not in map_agents:
+            map_agents[agent_key] = {
+                "acc": _empty_acc(),
+                "id": agent_key,
+                "name": match.get("agent_name") or "Inconnu",
+            }
+        _add_match(map_agents[agent_key]["acc"], match, rounds)
 
         atk = _empty_side()
         dfn = _empty_side()
@@ -479,6 +490,19 @@ def compute(db: Database, mode: str = "tactical", days: int = 90) -> Dict[str, A
         row = _finalize(item["acc"], "map")
         row.update({"id": item["id"], "name": item["name"]})
         row["reliability"] = _reliability(row["matches"], "map")
+
+        map_agents = []
+        for entry in item["agents"].values():
+            agent_row = _finalize(entry["acc"], "agent")
+            agent_row.update({"id": entry["id"], "name": entry["name"]})
+            agent_row["reliability"] = _reliability(agent_row["matches"], "agent")
+            map_agents.append(agent_row)
+        if map_agents:
+            # Impact is relative to the player's baseline *on this map*, so the
+            # drill-down answers "which agent works best here for me".
+            _apply_impact(map_agents, row)
+            map_agents.sort(key=lambda a: (-a["impact"], -a["matches"], a["name"]))
+        row["agents"] = map_agents
         maps.append(row)
 
     _apply_impact(agents, summary)
@@ -504,6 +528,8 @@ def compute(db: Database, mode: str = "tactical", days: int = 90) -> Dict[str, A
 
     recent = sorted(match_cards, key=lambda m: m["date"], reverse=True)[:60]
     insights = _build_insights(summary, agents, maps, trend)
+    eligible = [card for card in match_cards if card["acs"] > 0]
+    highlight = max(eligible, key=lambda m: (m["acs"], m["kills"])) if eligible else None
 
     return {
         "meta": {
@@ -519,5 +545,6 @@ def compute(db: Database, mode: str = "tactical", days: int = 90) -> Dict[str, A
         "maps": maps,
         "trend": trend,
         "recent": recent,
+        "highlight": highlight,
         "insights": insights,
     }

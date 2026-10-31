@@ -211,6 +211,14 @@ class Database:
             cur = conn.execute("DELETE FROM matches WHERE is_demo = 0")
             return cur.rowcount
 
+    def delete_non_competitive(self) -> int:
+        """Drop stored real games that are known to be outside ranked queues."""
+        condition = "is_demo = 0 AND queue_id IS NOT NULL AND queue_id NOT IN ('', 'unknown', 'competitive')"
+        with self.connect() as conn:
+            conn.execute(f"DELETE FROM rounds WHERE match_id IN (SELECT match_id FROM matches WHERE {condition})")
+            cur = conn.execute(f"DELETE FROM matches WHERE {condition}")
+            return cur.rowcount
+
     def delete_meta(self, key: str) -> None:
         with self.connect() as conn:
             conn.execute("DELETE FROM meta WHERE key = ?", (key,))

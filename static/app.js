@@ -15,13 +15,14 @@
     boot: null,
     stats: null,
     tab: "overview",
-    mode: localStorage.getItem("valo.mode") || "tactical",
+    mode: localStorage.getItem("valo.mode.v2") || "",
     days: Number(localStorage.getItem("valo.days") || 90),
     sort: {
       agents: { key: "impact", dir: -1 },
       maps: { key: "impact", dir: -1 },
     },
     search: "",
+    openMap: null,
     pollTimer: null,
     toastTimer: null,
   };
@@ -231,16 +232,14 @@
 
   async function reloadAll(initial) {
     try {
-      const [boot, stats] = await Promise.all([
-        fetchJSON("/api/bootstrap"),
-        fetchJSON("/api/stats?mode=" + encodeURIComponent(state.mode) + "&days=" + state.days),
-      ]);
+      const boot = await fetchJSON("/api/bootstrap");
       state.boot = boot;
-      state.stats = stats;
-      if (!modeExists(state.mode)) {
-        state.mode = "tactical";
-        state.stats = await fetchJSON("/api/stats?mode=tactical&days=" + state.days);
-      }
+      const preferred = boot.config && boot.config.queue_mode === "competitive" ? "competitive" : "tactical";
+      if (!state.mode) state.mode = preferred;
+      if (!modeExists(state.mode) && state.mode !== preferred) state.mode = preferred;
+      if (preferred !== "competitive" && !modeExists(state.mode)) state.mode = "tactical";
+      localStorage.setItem("valo.mode.v2", state.mode);
+      state.stats = await fetchJSON("/api/stats?mode=" + encodeURIComponent(state.mode) + "&days=" + state.days);
       renderAll();
       if (initial && !boot.configured && !boot.demo) {
         setTimeout(openSettings, 500);
@@ -322,6 +321,14 @@
     });
 
     app.addEventListener("click", onAppClick);
+    app.addEventListener("keydown", function (event) {
+      const el = event.target.closest('[data-map-toggle][role="button"]');
+      if (!el) return;
+      if (event.key === "Enter" || event.key === " " || event.key === "Spacebar") {
+        event.preventDefault();
+        toggleMap(el.dataset.mapToggle);
+      }
+    });
     app.addEventListener("input", function (event) {
       if (event.target && event.target.id === "matches-search") {
         state.search = event.target.value;
@@ -390,8 +397,12 @@
     const stats = state.stats;
     const summary = stats ? stats.summary : { matches: 0, rounds: 0 };
     const queues = (state.boot && state.boot.filters && state.boot.filters.queues) || [];
+    const queueMode = (state.boot && state.boot.config && state.boot.config.queue_mode) || "tactical";
     let options = '<option value="tactical"' + (state.mode === "tactical" ? " selected" : "") + ">Modes tactiques</option>";
     options += '<option value="all"' + (state.mode === "all" ? " selected" : "") + ">Toutes les parties</option>";
+    if (queueMode === "competitive" && !queues.some(function (q) { return q.id === "competitive"; })) {
+      options += '<option value="competitive"' + (state.mode === "competitive" ? " selected" : "") + ">Competitive (0)</option>";
+    }
     queues.forEach(function (q) {
       if (!q.id || q.id === "unknown") return;
       options +=
@@ -427,7 +438,7 @@
     if (select) {
       select.addEventListener("change", function () {
         state.mode = this.value;
-        localStorage.setItem("valo.mode", state.mode);
+        localStorage.setItem("valo.mode.v2", state.mode);
         reloadStats();
       });
     }
@@ -482,7 +493,7 @@
     const s = state.stats.summary;
     const profile = profileInfo();
     const lastSync = state.boot && state.boot.sync ? state.boot.sync.last_sync : null;
-    const heroArt = mediaUrl("card", profile.card);
+    const heroArt = mediaUrl("card", profile.card) || "/static/logo.jpg";
     const rank = rankBadge(profile);
 
     const kpi = [
@@ -500,7 +511,7 @@
     const verdict = sideVerdict(atk, dfn);
 
     return (
-      '<section class="hero">' +
+      '<section class="hero" style="--hero-art:url(\'' + esc(heroArt) + '\')">' +
       '<div class="hero-main">' +
       '<p class="eyebrow">Rapport de performance · ' + esc(modeText()) + "</p>" +
       "<h1>" + esc(profile.name || "Joueur") +
@@ -861,21 +872,25 @@
       '<div class="panel"><div class="panel-head"><h3>Win rate par map</h3><p>Repère à 50 % · indice de performance</p></div>' +
       '<div class="panel-body map-bars">' + mapBars(maps) + "</div></div>" +
       '<div class="panel" style="margin-top:12px"><div class="panel-head"><h3>Détail par map</h3>' +
-      '<p>ATK / DEF = win rate de round par côté</p></div><div class="table-wrap">' + mapsTable(maps) + "</div>" +
+      '<p>Clique sur une map pour voir tes stats par agent · ATK / DEF = win rate de round par côté</p></div><div class="table-wrap">' + mapsTable(maps) + "</div>" +
+      (state.openMap ? mapDetail(maps.find(function (m) { return m.id === state.openMap; })) : "") +
       '<div class="table-foot"><span>Les maps avec peu de parties ont un indice moins fiable.</span><span>Clique sur un en-tête pour trier.</span><span class="only-mobile">Glisse pour voir toutes les colonnes.</span></div></div>'
     );
   }
 
   function mapSpotlight(kind, kicker, map, badge) {
+    const open = state.openMap === map.id;
     return (
-      '<article class="spotlight ' + kind + '">' + mapThumb(map.id, map.name) +
+      '<article class="spotlight is-clickable ' + kind + '" data-map-toggle="' + esc(map.id) + '" role="button" tabindex="0" aria-expanded="' + (open ? "true" : "false") + '" aria-label="Voir les agents sur ' + esc(map.name) + '">' +
+      mapThumb(map.id, map.name) +
       '<div class="spot-body"><div class="spot-kicker"><span class="marker"></span>' + esc(kicker) + "</div>" +
       "<h3>" + esc(map.name) + "</h3>" +
       '<div class="spot-stats"><span><b>' + pct(map.win_rate) + "</b> WR</span>" +
       "<span><b>" + fmtInt(map.acs) + "</b> ACS</span>" +
       "<span><b>" + fmt2(map.kd) + "</b> K/D</span></div>" +
       '<div class="spot-stats" style="margin-top:5px"><span>' + map.matches + " parties</span>" +
-      '<span class="chip ' + (map.impact >= 100 ? "good" : "bad") + '">' + esc(badge) + " " + signed(map.impact - 100) + "</span></div>" +
+      '<span class="chip ' + (map.impact >= 100 ? "good" : "bad") + '">' + esc(badge) + " " + signed(map.impact - 100) + "</span>" +
+      '<span class="spot-open">Agents →</span></div>' +
       "</div></article>"
     );
   }
@@ -898,9 +913,11 @@
       th("Indice", "impact", "maps", "num") +
       "</tr></thead><tbody>" +
       rows.map(function (m) {
+        const open = state.openMap === m.id;
         return (
-          "<tr>" +
-          '<td><div class="agent-cell">' + mapThumb(m.id, m.name) + '<span class="strong">' + esc(m.name) + "</span></div></td>" +
+          '<tr class="map-row' + (open ? " is-open" : "") + '" data-map-toggle="' + esc(m.id) + '">' +
+          '<td><div class="map-cell"><div class="agent-cell">' + mapThumb(m.id, m.name) + '<span class="strong">' + esc(m.name) + "</span></div>" +
+          '<button class="row-toggle" type="button" data-map-toggle="' + esc(m.id) + '" aria-expanded="' + (open ? "true" : "false") + '" aria-controls="map-detail-panel" aria-label="' + (open ? "Masquer" : "Afficher") + " les agents sur " + esc(m.name) + '">' + (open ? "−" : "+") + "</button></div></td>" +
           '<td class="num muted">' + m.matches + "</td>" +
           '<td class="num ' + (m.win_rate >= 50 ? "strong" : "muted") + '">' + pct(m.win_rate) + "</td>" +
           '<td class="num">' + fmt2(m.kd) + "</td>" +
@@ -914,6 +931,54 @@
       }).join("") +
       "</tbody></table>"
     );
+  }
+
+  function mapDetail(m) {
+    if (!m) return "";
+    const agents = m.agents || [];
+    if (!agents.length) {
+      return '<div class="map-detail" id="map-detail-panel"><p class="muted">Pas encore assez de parties sur cette map.</p></div>';
+    }
+    const best = agents.find(function (a) { return a.matches >= 2; }) || null;
+    return (
+      '<div class="map-detail" id="map-detail-panel">' +
+      '<div class="map-detail-head"><div><p class="eyebrow">Détail de la map</p><h4>Agents sur ' + esc(m.name) + "</h4></div>" +
+      '<p class="map-detail-note">Indice calculé par rapport à ta moyenne sur cette map.</p></div>' +
+      '<div class="table-wrap"><table class="data compact"><thead><tr>' +
+      "<th>Agent</th><th class=\"num\">Parties</th><th class=\"num\">WR</th><th class=\"num\">K/D</th><th class=\"num\">ACS</th><th class=\"num\">ADR</th><th class=\"num\">ATK WR</th><th class=\"num\">DEF WR</th><th class=\"num\">Indice</th>" +
+      "</tr></thead><tbody>" +
+      agents.map(function (a) {
+        const isBest = best && a.id === best.id;
+        return (
+          "<tr><td><div class=\"agent-cell\">" + agentAvatar(a.id, a.name) +
+          '<span class="strong">' + esc(a.name) + "</span>" +
+          (isBest ? '<span class="chip good">Meilleur</span>' : "") + "</div></td>" +
+          '<td class="num muted">' + a.matches + "</td>" +
+          '<td class="num ' + (a.win_rate >= 50 ? "strong" : "muted") + '">' + pct(a.win_rate) + "</td>" +
+          '<td class="num">' + fmt2(a.kd) + "</td>" +
+          '<td class="num strong">' + fmtInt(a.acs) + "</td>" +
+          '<td class="num muted">' + fmtInt(a.adr) + "</td>" +
+          '<td class="num">' + sideRate(a.attack) + "</td>" +
+          '<td class="num">' + sideRate(a.defense) + "</td>" +
+          '<td class="num">' + impactChip(a.impact) + "</td></tr>"
+        );
+      }).join("") +
+      "</tbody></table></div></div>"
+    );
+  }
+
+  function toggleMap(id) {
+    if (!id) return;
+    state.openMap = state.openMap === id ? null : id;
+    renderView();
+    if (state.openMap) {
+      const target = document.getElementById("map-detail-panel");
+      if (target) {
+        window.requestAnimationFrame(function () {
+          target.scrollIntoView({ behavior: "smooth", block: "center" });
+        });
+      }
+    }
   }
 
   /* ------------------------------------------------------------------- sides */
@@ -1003,7 +1068,9 @@
   function renderMatches() {
     if (!hasData()) return emptyState();
     const count = state.stats.recent.length;
+    const highlight = state.stats.highlight;
     return (
+      (highlight ? recordCard(highlight) : "") +
       '<div class="panel"><div class="panel-head"><h3>Historique récent</h3><p>' + count + " dernières parties de la période</p></div>" +
       '<div class="panel-body">' +
       '<div class="match-toolbar"><input class="search" id="matches-search" type="search" placeholder="Filtrer par map, agent ou file…" value="' + esc(state.search) + '" autocomplete="off">' +
@@ -1028,6 +1095,34 @@
     zone.innerHTML = matchesTable(rows, true);
     const count = document.getElementById("matches-count");
     if (count) count.textContent = rows.length + " partie" + (rows.length > 1 ? "s" : "");
+  }
+
+  function recordCard(m) {
+    const cls = resultClass(m);
+    const atkLost = Math.max(0, m.attack_rounds - m.attack_wins);
+    const defLost = Math.max(0, m.defense_rounds - m.defense_wins);
+    return (
+      '<article class="record-card">' +
+      '<div class="record-kicker"><span class="marker"></span>Meilleure partie · plus haut ACS</div>' +
+      '<div class="record-grid">' +
+      '<div class="record-who">' + agentAvatar(m.agent_id, m.agent, "xl") +
+      '<div class="record-id"><h3>' + esc(m.agent) + "</h3>" +
+      "<p>" + esc(m.map) + " · " + esc(dateShort(m.date)) + "</p>" +
+      '<div class="record-tags"><span class="result-badge ' + cls + '">' + resultLetter(m) + "</span>" +
+      '<span class="score-main ' + cls + '">' + esc(m.score) + "</span>" +
+      '<span class="queue-tag">' + esc(queueLabel(m.queue_id || m.queue)) + "</span></div></div></div>" +
+      '<div class="record-acs"><span class="value">' + fmtInt(m.acs) + '</span><span class="label">ACS</span></div>' +
+      '<div class="record-stats">' +
+      recordStat(m.kills + " / " + m.deaths + " / " + m.assists, "K / D / A") +
+      recordStat(fmt2(m.kd), "K/D") +
+      recordStat(m.attack_wins + "-" + atkLost, "ATK") +
+      recordStat(m.defense_wins + "-" + defLost, "DEF") +
+      "</div></div></article>"
+    );
+  }
+
+  function recordStat(value, label) {
+    return '<div class="record-stat"><span class="v">' + value + '</span><span class="k">' + esc(label) + "</span></div>";
   }
 
   function matchesTable(rows, detailed) {
@@ -1101,6 +1196,11 @@
   }
 
   function onAppClick(event) {
+    const mapEl = event.target.closest("[data-map-toggle]");
+    if (mapEl) {
+      toggleMap(mapEl.dataset.mapToggle);
+      return;
+    }
     const sortEl = event.target.closest("[data-sort-table]");
     if (sortEl) {
       const table = sortEl.dataset.sortTable;
@@ -1251,6 +1351,7 @@
     $("#field-region").value = cfg.region || "eu";
     $("#field-platform").value = cfg.platform || "pc";
     $("#field-backfill").value = String(cfg.backfill || 40);
+    $("#field-queue-mode").value = cfg.queue_mode || "competitive";
     const key = $("#field-key");
     key.value = "";
     key.type = "password";
@@ -1269,6 +1370,7 @@
       platform: $("#field-platform").value,
       api_key: $("#field-key").value.trim(),
       backfill: Number($("#field-backfill").value) || 40,
+      queue_mode: $("#field-queue-mode").value,
     };
   }
 
@@ -1318,11 +1420,13 @@
     }
     const saveBtn = $("#save-btn");
     const syncBtn = $("#save-sync-btn");
+    const previousQueueMode = (state.boot && state.boot.config && state.boot.config.queue_mode) || "competitive";
     saveBtn.disabled = true;
     syncBtn.disabled = true;
     settingsFeedback("Enregistrement…", "");
     try {
       const result = await fetchJSON("/api/settings", { method: "POST", body: JSON.stringify(payload) });
+      const queueModeChanged = previousQueueMode !== result.config.queue_mode;
       state.boot = result.bootstrap;
       $("#field-key").value = "";
       $("#field-key").placeholder = result.config.has_api_key ? "Clé enregistrée — laisser vide" : "Coller la clé ici";
@@ -1330,9 +1434,16 @@
       renderNotices();
       renderSyncUI();
       updateSettingsSummary();
-      if (result.identity_changed) {
+      if (result.identity_changed || queueModeChanged) {
+        if (queueModeChanged) {
+          state.mode = result.config.queue_mode === "competitive" ? "competitive" : "tactical";
+          localStorage.setItem("valo.mode.v2", state.mode);
+        }
         state.stats = await fetchJSON("/api/stats?mode=" + encodeURIComponent(state.mode) + "&days=" + state.days);
         renderView();
+      }
+      if (queueModeChanged && result.purged) {
+        showToast(result.purged + " partie" + (result.purged > 1 ? "s" : "") + " non compétitive" + (result.purged > 1 ? "s" : "") + " supprimée" + (result.purged > 1 ? "s" : "") + ".", "ok");
       }
       if (andSync && result.configured) {
         dialog.close();

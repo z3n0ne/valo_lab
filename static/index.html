@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="theme-color" content="#0a1017">
   <title>VALO//LAB — Dashboard Valorant</title>
+  <link rel="icon" type="image/png" href="/static/favicon.png">
   <link rel="stylesheet" href="/static/style.css">
 </head>
 <body>
@@ -15,7 +16,7 @@
 
   <header class="topbar">
     <a class="brand" href="#overview" aria-label="VALO LAB, accueil">
-      <span class="brand-mark">V</span>
+      <img class="brand-mark" src="/static/logo-mark.jpg" alt="" width="34" height="34">
       <span class="brand-text">VALO<span class="brand-slashes">//</span>LAB</span>
     </a>
 
@@ -106,6 +107,14 @@
             <button class="mini-btn" type="button" id="toggle-key">Afficher</button>
           </div>
           <small>Laisse vide pour conserver la clé déjà enregistrée. Elle reste stockée en local, jamais affichée en clair.</small>
+        </label>
+        <label class="field field-wide">
+          <span>Files récupérées</span>
+          <select name="queue_mode" id="field-queue-mode">
+            <option value="competitive">Compétitif uniquement</option>
+            <option value="tactical">Toutes les files</option>
+          </select>
+          <small>Le mode compétitif garde des statistiques comparables. Les parties non compétitives déjà stockées sont supprimées si tu repasses en compétitif.</small>
         </label>
         <label class="field field-wide">
           <span>Profondeur d'historique</span>
