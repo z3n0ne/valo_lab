@@ -17,9 +17,13 @@ def _round(
     plant=None,
     defuse=None,
     first_blood=None,
+    result=None,
+    ceremony=None,
 ):
     return {
         "id": round_id,
+        "result": result,
+        "ceremony": ceremony,
         "winning_team": winning_team,
         "winning_team_role": role,
         "stats": stats or [],
@@ -122,6 +126,58 @@ class SideAttributionTests(unittest.TestCase):
     def test_unknown_side_is_none(self):
         side, _ = self._side(_round(1, "blue", None, [_player_stats()]))
         self.assertIsNone(side)
+
+
+class EndCauseTests(unittest.TestCase):
+    def _end(self, raw_round, kills=None):
+        _, rows = normalize_match(build_match([raw_round], kills=kills), ME)
+        self.assertTrue(rows)
+        return rows[0]["end_cause"]
+
+    def test_bomb_detonation(self):
+        cause = self._end(_round(1, "blue", "attack", [_player_stats()], result="Bomb detonated"))
+        self.assertEqual(cause, "detonation")
+
+    def test_bomb_defuse(self):
+        cause = self._end(_round(1, "red", "defense", [_player_stats()], result="Bomb defused"))
+        self.assertEqual(cause, "defuse")
+
+    def test_timeout(self):
+        cause = self._end(_round(1, "red", "defense", [_player_stats()], result="Time ran out"))
+        self.assertEqual(cause, "timeout")
+
+    def test_attack_elimination(self):
+        cause = self._end(_round(1, "blue", "attack", [_player_stats()], result="Eliminated"))
+        self.assertEqual(cause, "attack_elimination")
+
+    def test_defense_elimination(self):
+        cause = self._end(_round(1, "red", "defense", [_player_stats()], result="Eliminated"))
+        self.assertEqual(cause, "defense_elimination")
+
+    def test_cancelled_rounds_are_other(self):
+        cause = self._end(_round(1, "blue", "attack", [_player_stats()], result="Surrendered"))
+        self.assertEqual(cause, "other")
+
+    def test_missing_result_falls_back_to_the_attack_win(self):
+        cause = self._end(_round(1, "blue", "attack", [_player_stats()]))
+        self.assertEqual(cause, "attack_elimination")
+
+    def test_missing_result_falls_back_to_the_defense_timeout(self):
+        cause = self._end(_round(1, "blue", "defense", [_player_stats()]))
+        self.assertEqual(cause, "timeout")
+
+    def test_missing_result_detects_a_defense_wipe(self):
+        kills = [
+            {
+                "round": 1,
+                "killer": {"puuid": ALLY, "team": "blue"},
+                "victim": {"puuid": f"red-{index}", "team": "red"},
+                "assistants": [],
+            }
+            for index in range(5)
+        ]
+        cause = self._end(_round(1, "blue", "defense", [_player_stats()]), kills=kills)
+        self.assertEqual(cause, "defense_elimination")
 
 
 class NormalizeMatchTests(unittest.TestCase):

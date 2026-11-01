@@ -8,7 +8,15 @@ from valorant.analytics import compute
 from valorant.db import Database
 
 
-def _rounds(match_id, attack_wins, defense_wins, attack_rounds, defense_rounds):
+def _rounds(
+    match_id,
+    attack_wins,
+    defense_wins,
+    attack_rounds,
+    defense_rounds,
+    attack_cause=None,
+    defense_cause=None,
+):
     rows = []
     number = 1
     for _ in range(attack_rounds):
@@ -28,6 +36,7 @@ def _rounds(match_id, attack_wins, defense_wins, attack_rounds, defense_rounds):
                 "legshots": 0,
                 "first_blood_mine": 0,
                 "first_death_mine": 0,
+                "end_cause": attack_cause,
             }
         )
         attack_wins = max(0, attack_wins - 1)
@@ -49,6 +58,7 @@ def _rounds(match_id, attack_wins, defense_wins, attack_rounds, defense_rounds):
                 "legshots": 0,
                 "first_blood_mine": 0,
                 "first_death_mine": 0,
+                "end_cause": defense_cause,
             }
         )
         defense_wins = max(0, defense_wins - 1)
@@ -83,6 +93,8 @@ class AnalyticsTestCase(unittest.TestCase):
         attack_rounds=12,
         defense_rounds=12,
         queue="competitive",
+        attack_cause=None,
+        defense_cause=None,
     ):
         started = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
         match = {
@@ -114,8 +126,38 @@ class AnalyticsTestCase(unittest.TestCase):
             "is_demo": 0,
             "synced_at": started,
         }
-        rounds = _rounds(match_id, attack_wins, defense_wins, attack_rounds, defense_rounds)
+        rounds = _rounds(
+            match_id,
+            attack_wins,
+            defense_wins,
+            attack_rounds,
+            defense_rounds,
+            attack_cause=attack_cause,
+            defense_cause=defense_cause,
+        )
         self.db.upsert_match(match, rounds)
+
+    def add_mmr(self, match_id, days_ago, elo, delta, rr=None):
+        played = (datetime.now(timezone.utc) - timedelta(days=days_ago)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        self.db.upsert_mmr_history(
+            [
+                {
+                    "match_id": match_id,
+                    "played_at": played,
+                    "rr": elo % 100 if rr is None else rr,
+                    "last_change": delta,
+                    "elo": elo,
+                    "tier_id": 1,
+                    "tier_name": "Diamond 1",
+                    "map_id": "ascent",
+                    "map_name": "Ascent",
+                    "season_id": "s1",
+                    "season_short": "S1",
+                    "is_demo": 0,
+                    "synced_at": played,
+                }
+            ]
+        )
 
     def seed_four_matches(self):
         # 2 wins / 2 losses, more rounds won on attack than on defense.
@@ -229,6 +271,117 @@ class SummaryTests(AnalyticsTestCase):
         self.assertEqual(compute(self.db, days=3650)["summary"]["matches"], 5)
 
 
+class EndingTests(AnalyticsTestCase):
+    def test_endings_are_grouped_globally_and_per_map(self):
+        self.add_match(
+            "e1", "Omen", "Ascent", 1, 13, 11, 20, 16, 4, 4400, 2200, 8, 6,
+            attack_cause="detonation", defense_cause="defuse",
+        )
+        data = compute(self.db)
+        summary = data["summary"]
+        endings = {item["id"]: item for item in summary["endings"]}
+        self.assertEqual(endings["detonation"]["rounds"], 12)
+        self.assertEqual(endings["detonation"]["wins"], 8)
+        self.assertEqual(endings["detonation"]["losses"], 4)
+        self.assertEqual(endings["detonation"]["side"], "attack")
+        self.assertEqual(endings["defuse"]["rounds"], 12)
+        self.assertEqual(endings["defuse"]["wins"], 6)
+        self.assertEqual(endings["defuse"]["side"], "defense")
+        self.assertEqual(summary["ending_rounds"], 24)
+        self.assertEqual(summary["rounds_without_cause"], 0)
+
+        ascent = data["maps"][0]
+        self.assertEqual(ascent["ending_rounds"], 24)
+        self.assertEqual({item["id"] for item in ascent["endings"] if item["rounds"]}, {"detonation", "defuse"})
+
+    def test_unclassified_rounds_are_counted(self):
+        self.add_match(
+            "e1", "Omen", "Ascent", 1, 13, 11, 20, 16, 4, 4400, 2200, 8, 6,
+            attack_cause="detonation", defense_cause="defuse",
+        )
+        self.add_match("e2", "Omen", "Ascent", 2, 13, 9, 18, 14, 5, 4100, 2050, 7, 6)
+        summary = compute(self.db)["summary"]
+        self.assertEqual(summary["rounds"], 48)
+        self.assertEqual(summary["ending_rounds"], 24)
+        self.assertEqual(summary["rounds_without_cause"], 24)
+
+
+class AcsImpactTests(AnalyticsTestCase):
+    def test_high_acs_is_compared_with_low_acs(self):
+        self.seed_four_matches()
+        impact = compute(self.db)["acs_impact"]
+        self.assertTrue(impact["available"])
+        self.assertEqual(impact["matches"], 4)
+        self.assertEqual(impact["high"]["wins"], 2)
+        self.assertEqual(impact["low"]["wins"], 0)
+        self.assertEqual(impact["high"]["win_rate"], 100.0)
+        self.assertEqual(impact["low"]["win_rate"], 0.0)
+        self.assertEqual(impact["lift"], 100.0)
+        self.assertGreater(impact["correlation"], 0.35)
+        self.assertEqual(impact["strength"], "strong")
+        self.assertIn("convertit", impact["verdict"])
+
+    def test_missing_games_disable_the_metric(self):
+        self.add_match("solo", "Omen", "Ascent", 1, 13, 9, 20, 14, 4, 4400, 2200, 7, 6)
+        impact = compute(self.db)["acs_impact"]
+        self.assertFalse(impact["available"])
+        self.assertEqual(impact["matches"], 1)
+
+    def test_conversion_insight_is_published(self):
+        self.seed_four_matches()
+        insights = compute(self.db)["insights"]
+        conversion = [item for item in insights if item["tag"] == "CONVERSION"]
+        self.assertTrue(conversion)
+        self.assertEqual(conversion[0]["kind"], "strength")
+        self.assertIn("100", conversion[0]["detail"])
+
+
+class RrHistoryTests(AnalyticsTestCase):
+    def test_empty_history_is_safe(self):
+        self.seed_four_matches()
+        history = compute(self.db)["rr_history"]
+        self.assertFalse(history["available"])
+        self.assertEqual(history["points"], [])
+
+    def test_elo_history_is_sorted_and_merged_with_matches(self):
+        self.seed_four_matches()
+        self.add_mmr("m1", 4, 1000, 20)
+        self.add_mmr("m2", 3, 1020, -10)
+        self.add_mmr("m3", 2, 1010, 15)
+        self.add_mmr("m4", 1, 1050, 40)
+        data = compute(self.db)
+        history = data["rr_history"]
+        self.assertTrue(history["available"])
+        self.assertEqual(history["metric"], "elo")
+        self.assertEqual(history["metric_label"], "RR cumulés")
+        self.assertEqual(history["matches"], 4)
+        self.assertEqual([point["match_id"] for point in history["points"]], ["m1", "m2", "m3", "m4"])
+        self.assertEqual(history["start"]["value"], 1000)
+        self.assertEqual(history["current"]["value"], 1050)
+        self.assertEqual(history["change"], 50)
+        self.assertEqual(history["current"]["agent"], "Raze")
+        self.assertEqual(history["points"][0]["agent"], "Omen")
+
+    def test_rr_within_rank_is_used_when_elo_is_missing(self):
+        self.seed_four_matches()
+        for index, match_id in enumerate(("m1", "m2", "m3", "m4")):
+            self.add_mmr(match_id, 4 - index, 0, 5, rr=10 + index * 7)
+        history = compute(self.db)["rr_history"]
+        self.assertEqual(history["metric"], "rr")
+        self.assertEqual(history["metric_label"], "RR dans le rang")
+        self.assertEqual(history["current"]["value"], 31)
+
+    def test_old_history_follows_the_period_filter(self):
+        self.seed_four_matches()
+        self.add_mmr("m1", 4, 1000, 20)
+        self.add_mmr("m2", 3, 1020, 20)
+        self.add_mmr("m3", 2, 1040, 20)
+        self.add_mmr("m4", 1, 1060, 20)
+        self.add_mmr("old", 400, 900, -20)
+        history = compute(self.db, days=90)["rr_history"]
+        self.assertEqual(history["matches"], 4)
+
+
 class InsightTests(AnalyticsTestCase):
     def test_insights_have_the_expected_shape(self):
         self.seed_four_matches()
@@ -240,7 +393,7 @@ class InsightTests(AnalyticsTestCase):
             self.assertTrue(item["detail"])
             self.assertIn(item["confidence"], {"high", "medium", "low"})
             self.assertIsInstance(item["sample"], int)
-            self.assertIn(item["tag"], {"AGENT", "MAP", "CÔTÉ", "OUVERTURE", "FORME", "DONNÉES"})
+            self.assertIn(item["tag"], {"AGENT", "MAP", "CÔTÉ", "OUVERTURE", "FORME", "CONVERSION", "DONNÉES"})
 
     def test_balanced_sides_are_reported_as_such(self):
         self.seed_four_matches()

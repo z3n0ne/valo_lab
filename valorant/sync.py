@@ -28,6 +28,70 @@ def _parse_iso(value: Optional[str]) -> Optional[datetime]:
         return None
 
 
+def _as_int(value: Any, default: int = 0) -> int:
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _date_iso(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        try:
+            dt = datetime.fromtimestamp(float(value), tz=timezone.utc)
+        except (OverflowError, OSError, ValueError):
+            return _now_iso()
+        return dt.strftime("%Y-%m-%dT%H:%M:%SZ")
+    if not value:
+        return _now_iso()
+    text = str(value).strip().replace("Z", "+00:00").replace(" ", "T")
+    try:
+        dt = datetime.fromisoformat(text)
+    except ValueError:
+        return _now_iso()
+    if dt.tzinfo is None:
+        dt = dt.replace(tzinfo=timezone.utc)
+    return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def normalize_mmr_history(history: Any, is_demo: bool = False) -> list:
+    """Flatten a v2 MMR-history payload into rows for the local database."""
+    if isinstance(history, dict):
+        history = history.get("history") or []
+    if not isinstance(history, list):
+        return []
+    rows = []
+    for entry in history:
+        if not isinstance(entry, dict):
+            continue
+        match_id = entry.get("match_id") or ""
+        if not match_id:
+            continue
+        tier = entry.get("tier") if isinstance(entry.get("tier"), dict) else {}
+        map_info = entry.get("map") if isinstance(entry.get("map"), dict) else {}
+        season = entry.get("season") if isinstance(entry.get("season"), dict) else {}
+        rows.append(
+            {
+                "match_id": match_id,
+                "played_at": _date_iso(entry.get("date")),
+                "rr": _as_int(entry.get("rr", entry.get("ranking_in_tier"))),
+                "last_change": _as_int(
+                    entry.get("last_change", entry.get("mmr_change_to_last_game"))
+                ),
+                "elo": _as_int(entry.get("elo")),
+                "tier_id": _as_int(tier.get("id")),
+                "tier_name": tier.get("name") or entry.get("currenttierpatched") or "",
+                "map_id": map_info.get("id") or "",
+                "map_name": map_info.get("name") or "",
+                "season_id": season.get("id") or entry.get("season_id") or "",
+                "season_short": season.get("short") or "",
+                "is_demo": 1 if is_demo else 0,
+                "synced_at": _now_iso(),
+            }
+        )
+    return rows
+
+
 def match_queue_id(raw: Dict[str, Any]) -> str:
     """Return the queue id carried by a v4 match payload ("" when unknown)."""
     metadata = raw.get("metadata") or {}
@@ -172,6 +236,16 @@ class SyncManager:
                 # Unranked / MMR unavailable is not fatal.
                 pass
 
+            try:
+                self._update(message="Récupération de l'historique RR…", progress=0, total=1)
+                history = client.mmr_history(region, platform, name, tag)
+                mmr_rows = normalize_mmr_history(history)
+                if mmr_rows:
+                    self.db.upsert_mmr_history(mmr_rows)
+            except (HenrikError, AttributeError):
+                # The RR history is a bonus: keep syncing matches if it fails.
+                pass
+
             queue_mode = cfg.get("queue_mode", "competitive")
             existing = self.db.existing_ids()
             target = int(cfg["backfill"])
@@ -227,6 +301,31 @@ class SyncManager:
             if self.db.has_demo():
                 self.db.delete_demo()
 
+            # Older databases predate the end-of-round cause column. Complete
+            # them once, without forcing the user to trigger a full re-sync.
+            backfilled = 0
+            missing = self.db.match_ids_missing_end_cause(queue_mode=queue_mode, limit=60)
+            if missing:
+                for index, match_id in enumerate(missing):
+                    self._update(
+                        message=f"Complétion des fins de round ({index + 1}/{len(missing)})…",
+                        progress=index,
+                        total=len(missing),
+                    )
+                    try:
+                        raw = client.match(region, match_id)
+                    except HenrikError:
+                        continue
+                    parsed = normalize_match(raw, puuid)
+                    if not parsed:
+                        continue
+                    row, rounds = parsed
+                    if not rounds or not any(round_row.get("end_cause") for round_row in rounds):
+                        continue
+                    row["is_demo"] = 0
+                    self.db.upsert_match(row, rounds)
+                    backfilled += 1
+
             self.db.set_meta("profile", profile)
             self.db.set_meta("last_sync", _now_iso())
             message = (
@@ -238,6 +337,11 @@ class SyncManager:
                 message += (
                     f" · {skipped} partie{'s' if skipped > 1 else ''} hors compétitif "
                     f"ignorée{'s' if skipped > 1 else ''}"
+                )
+            if backfilled:
+                message += (
+                    f" · {backfilled} partie{'s' if backfilled > 1 else ''} "
+                    f"complétée{'s' if backfilled > 1 else ''} pour les fins de round"
                 )
             done = max(1, scanned)
             self._update(

@@ -26,6 +26,25 @@ AGENTS: Dict[str, Dict[str, Any]] = {
     "Chamber": {"weight": 0.08, "attack": 0.010, "defense": 0.025, "kills": 1.08, "score": 1.04, "synergy": {"Lotus": 0.02, "Sunset": 0.02}},
 }
 
+TIER_NAMES = (
+    "Iron",
+    "Bronze",
+    "Silver",
+    "Gold",
+    "Platinum",
+    "Diamond",
+    "Ascendant",
+    "Immortal",
+)
+
+
+def _tier_for_elo(elo: int) -> str:
+    if elo >= 2400:
+        return "Radiant"
+    index = min(len(TIER_NAMES) - 1, max(0, elo // 300))
+    division = (elo % 300) // 100 + 1
+    return f"{TIER_NAMES[index]} {division}"
+
 
 def _pick(rng: random.Random, weights: Dict[str, float]) -> str:
     return rng.choices(list(weights), weights=list(weights.values()), k=1)[0]
@@ -57,6 +76,7 @@ def _sample_match(rng: random.Random, idx: int, started_at: datetime, competitiv
     agent_name = _pick(rng, {name: data["weight"] for name, data in AGENTS.items()})
     map_profile = MAPS[map_name]
     agent = AGENTS[agent_name]
+    cause_rng = random.Random(9000 + idx)
 
     start_side = rng.choice(["attack", "defense"])
     my_score = 0
@@ -111,6 +131,17 @@ def _sample_match(rng: random.Random, idx: int, started_at: datetime, competitiv
             first_death = 0
         first_blood = 0 if first_death else (1 if rng.random() < 0.56 else 0)
 
+        if won and side == "attack":
+            end_cause = "detonation" if cause_rng.random() < 0.45 else "attack_elimination"
+        elif won and side == "defense":
+            roll = cause_rng.random()
+            end_cause = "defuse" if roll < 0.35 else "defense_elimination" if roll < 0.75 else "timeout"
+        elif side == "attack":
+            roll = cause_rng.random()
+            end_cause = "defuse" if roll < 0.35 else "defense_elimination" if roll < 0.75 else "timeout"
+        else:
+            end_cause = "detonation" if cause_rng.random() < 0.45 else "attack_elimination"
+
         rounds.append(
             {
                 "match_id": f"demo-{idx:04d}",
@@ -127,6 +158,7 @@ def _sample_match(rng: random.Random, idx: int, started_at: datetime, competitiv
                 "legshots": ls,
                 "first_blood_mine": first_blood,
                 "first_death_mine": first_death,
+                "end_cause": end_cause,
             }
         )
         total_score += score
@@ -191,6 +223,7 @@ def seed_demo(db: Database, count: int = 90, competitive_only: bool = True) -> i
     now = datetime.now(timezone.utc).replace(second=0, microsecond=0) - timedelta(hours=1)
     start = now - timedelta(days=86)
     inserted = 0
+    history = []
     for idx in range(1, count + 1):
         # Spread matches over ~86 days, with a slight recent activity bump.
         offset = start + timedelta(days=(idx * 86.0 / count) + rng.uniform(0, 1.6))
@@ -199,7 +232,55 @@ def seed_demo(db: Database, count: int = 90, competitive_only: bool = True) -> i
             offset = now - timedelta(hours=rng.randint(1, 30))
         match, rounds = _sample_match(rng, idx, offset, competitive_only=competitive_only)
         db.upsert_match(match, rounds)
+        history.append(
+            {
+                "match_id": match["match_id"],
+                "played_at": match["started_at"],
+                "won": match["won"],
+                "draw": 1 if match["score_mine"] == match["score_enemy"] else 0,
+                "map_id": match["map_id"],
+                "map_name": match["map_name"],
+            }
+        )
         inserted += 1
+
+    final_rank, final_rr = "Diamond 1", 54
+    if history:
+        history.sort(key=lambda item: item["played_at"])
+        deltas = []
+        for index, item in enumerate(history):
+            if item["draw"]:
+                delta = 0
+            elif item["won"]:
+                delta = 18 + index % 6
+            else:
+                delta = -(14 + index % 4)
+            deltas.append(delta)
+        elo = max(0, 1554 - sum(deltas))
+        mmr_rows = []
+        for item, delta in zip(history, deltas):
+            elo = max(0, elo + delta)
+            mmr_rows.append(
+                {
+                    "match_id": item["match_id"],
+                    "played_at": item["played_at"],
+                    "rr": elo % 100,
+                    "last_change": delta,
+                    "elo": elo,
+                    "tier_id": 0,
+                    "tier_name": _tier_for_elo(elo),
+                    "map_id": item["map_id"],
+                    "map_name": item["map_name"],
+                    "season_id": "demo-season",
+                    "season_short": "D",
+                    "is_demo": 1,
+                    "synced_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+                }
+            )
+        db.upsert_mmr_history(mmr_rows)
+        if mmr_rows:
+            final_rank = mmr_rows[-1]["tier_name"]
+            final_rr = mmr_rows[-1]["rr"]
 
     profile = {
         "name": "DemoPlayer",
@@ -208,8 +289,8 @@ def seed_demo(db: Database, count: int = 90, competitive_only: bool = True) -> i
         "region": "eu",
         "card": "",
         "level": 312,
-        "rank": "Diamond 1",
-        "rr": 54,
+        "rank": final_rank,
+        "rr": final_rr,
         "peak": "Ascendant 2",
         "updated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "demo": True,

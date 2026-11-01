@@ -109,6 +109,13 @@ class ApiTests(unittest.TestCase):
         self.assertTrue(data["recent"])
         self.assertIn("profile", data)
         self.assertLessEqual(len(data["recent"]), 60)
+        self.assertIn("endings", data["summary"])
+        self.assertTrue(all("endings" in row for row in data["maps"]))
+        self.assertTrue(data["rr_history"]["available"])
+        self.assertEqual(data["rr_history"]["metric"], "elo")
+        self.assertGreaterEqual(data["rr_history"]["matches"], 2)
+        self.assertTrue(data["acs_impact"]["available"])
+        self.assertIn("lift", data["acs_impact"])
 
     def test_unknown_route(self):
         status, data = self.request("GET", "/api/nope")

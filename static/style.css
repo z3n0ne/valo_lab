@@ -572,7 +572,7 @@ a { color: inherit; }
 /* ---------------------------------------------------------------------- kpi */
 .kpi-grid {
   display: grid;
-  grid-template-columns: repeat(6, minmax(0, 1fr));
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 10px;
   margin-bottom: 26px;
 }
@@ -776,7 +776,8 @@ a { color: inherit; }
 
 .chart-card { min-width: 0; }
 
-.trend-wrap { padding: 10px 10px 6px; }
+.trend-wrap,
+.rr-wrap { padding: 10px 10px 6px; }
 .trend-svg { display: block; width: 100%; height: auto; overflow: visible; }
 .trend-legend {
   display: flex;
@@ -793,6 +794,87 @@ a { color: inherit; }
 .trend-legend .dot.draw { background: var(--muted-2); }
 .trend-legend .spacer { flex: 1; }
 .trend-legend b { color: var(--text); }
+.trend-legend .up b { color: var(--green); }
+.trend-legend .down b { color: var(--red); }
+
+/* ---------------------------------------------------------- ACS conversion */
+.conversion { padding: 16px 18px 14px; }
+
+.conversion-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  align-items: center;
+  gap: 18px;
+}
+
+.conversion-side {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  padding: 12px 14px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.conversion-label {
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+}
+
+.conversion-value {
+  font-family: var(--font-display);
+  font-size: 34px;
+  font-weight: 600;
+  line-height: 1;
+}
+
+.conversion-track {
+  position: relative;
+  height: 7px;
+  background: rgba(255, 255, 255, 0.055);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.conversion-track span { display: block; height: 100%; min-width: 2px; }
+.conversion-track .good { background: linear-gradient(90deg, #1c9e6b, var(--green)); }
+.conversion-track .bad { background: linear-gradient(90deg, #c72f3d, #ff6a76); }
+
+.conversion-sub { color: var(--muted-2); font-size: 11px; }
+
+.conversion-delta {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  min-width: 104px;
+  text-align: center;
+}
+.conversion-delta .value {
+  font-family: var(--font-display);
+  font-size: 30px;
+  font-weight: 600;
+  line-height: 1;
+  color: var(--text);
+}
+.conversion-delta .label { color: var(--muted-2); font-size: 9px; letter-spacing: 0.08em; text-transform: uppercase; }
+.conversion-delta.good .value { color: var(--green); }
+.conversion-delta.bad .value { color: var(--red); }
+
+.conversion-foot {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px 14px;
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid var(--line);
+}
+.conversion-foot p { margin: 0; flex: 1; min-width: 220px; color: var(--muted); font-size: 12px; line-height: 1.55; }
+.conversion-foot strong { color: var(--text); }
 
 .bars { display: flex; flex-direction: column; gap: 11px; }
 
@@ -1048,8 +1130,79 @@ table.data .sticky-last { background: #101a24; }
   text-transform: uppercase;
 }
 .map-detail-note { margin: 0; max-width: 330px; color: var(--muted-2); font-size: 11px; text-align: right; }
+.map-detail-empty { margin: 4px 0 0; font-size: 12px; }
 table.data.compact th,
 table.data.compact td { padding: 7px 9px; font-size: 11px; }
+
+.map-endings {
+  margin-top: 18px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+
+.ending-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.ending-card {
+  position: relative;
+  padding: 12px 13px 11px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.018);
+  overflow: hidden;
+}
+.ending-card::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0;
+  width: 22px;
+  height: 2px;
+  background: var(--muted-2);
+}
+.ending-card.attack::before { background: var(--red); }
+.ending-card.defense::before { background: var(--blue); }
+.ending-card.other::before { background: var(--amber); }
+
+.ending-top { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.ending-side {
+  font-family: var(--font-display);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.09em;
+  color: var(--muted);
+}
+.ending-card.attack .ending-side { color: #ff8b95; }
+.ending-card.defense .ending-side { color: #79b8ff; }
+.ending-share { color: var(--muted-2); font-size: 9px; letter-spacing: 0.05em; text-transform: uppercase; }
+
+.ending-card h5 {
+  margin: 8px 0 0;
+  min-height: 30px;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.3;
+  color: var(--text);
+}
+
+.ending-rate { display: flex; align-items: baseline; gap: 5px; margin-top: 8px; }
+.ending-rate b { font-family: var(--font-display); font-size: 24px; font-weight: 600; line-height: 1; }
+.ending-rate span { color: var(--muted-2); font-size: 9px; letter-spacing: 0.08em; }
+
+.ending-track {
+  position: relative;
+  height: 5px;
+  margin-top: 7px;
+  background: rgba(255, 255, 255, 0.055);
+  border-radius: 1px;
+  overflow: hidden;
+}
+.ending-track .bar-fill { position: absolute; inset: 0 auto 0 0; }
+
+.ending-sub { margin: 8px 0 0; color: var(--muted-2); font-size: 10px; }
 
 /* --------------------------------------------------------------------- side */
 .side-grid {
@@ -1441,7 +1594,7 @@ table.data.compact td { padding: 7px 9px; font-size: 11px; }
 
 /* ------------------------------------------------------------------ responsive */
 @media (max-width: 1180px) {
-  .kpi-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  .kpi-grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }
   .insights-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .topbar { gap: 18px; padding: 0 20px; }
   .app { padding: 22px 20px 70px; }
@@ -1482,6 +1635,10 @@ table.data.compact td { padding: 7px 9px; font-size: 11px; }
   .record-acs .label { margin-top: 0; }
   .map-detail-head { flex-direction: column; align-items: flex-start; gap: 4px; }
   .map-detail-note { text-align: left; }
+  .ending-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .conversion-grid { grid-template-columns: 1fr; gap: 10px; }
+  .conversion-delta { flex-direction: row; justify-content: center; gap: 8px; min-width: 0; }
+  .conversion-value { font-size: 28px; }
   table.data.compact th:nth-child(6),
   table.data.compact td:nth-child(6),
   table.data.compact th:nth-child(7),

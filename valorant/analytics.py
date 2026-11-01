@@ -1,6 +1,7 @@
 """Aggregations and coaching insights for the dashboard."""
 from __future__ import annotations
 
+import math
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -8,6 +9,22 @@ from .db import Database
 
 ATTACK = "attack"
 DEFENSE = "defense"
+
+END_DETONATION = "detonation"
+END_DEFUSE = "defuse"
+END_TIMEOUT = "timeout"
+END_ATTACK_ELIMINATION = "attack_elimination"
+END_DEFENSE_ELIMINATION = "defense_elimination"
+END_OTHER = "other"
+
+ENDING_ORDER = (
+    (END_DETONATION, "Explosion du spike", ATTACK),
+    (END_ATTACK_ELIMINATION, "Élimination des défenseurs", ATTACK),
+    (END_TIMEOUT, "Fin du temps", DEFENSE),
+    (END_DEFUSE, "Defuse du spike", DEFENSE),
+    (END_DEFENSE_ELIMINATION, "Élimination des attaquants", DEFENSE),
+)
+ENDING_KEYS = {item[0] for item in ENDING_ORDER}
 
 
 # --------------------------------------------------------------------- helpers
@@ -185,6 +202,185 @@ def _date_label(iso: str) -> str:
         return iso[:10]
 
 
+def _median(values: List[float]) -> float:
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    middle = len(ordered) // 2
+    if len(ordered) % 2:
+        return float(ordered[middle])
+    return (ordered[middle - 1] + ordered[middle]) / 2.0
+
+
+def _pearson(xs: List[float], ys: List[float]) -> float:
+    count = len(xs)
+    if count < 2 or count != len(ys):
+        return 0.0
+    mean_x = sum(xs) / count
+    mean_y = sum(ys) / count
+    numerator = sum((x - mean_x) * (y - mean_y) for x, y in zip(xs, ys))
+    variance_x = math.sqrt(sum((x - mean_x) ** 2 for x in xs))
+    variance_y = math.sqrt(sum((y - mean_y) ** 2 for y in ys))
+    if not variance_x or not variance_y:
+        return 0.0
+    return numerator / (variance_x * variance_y)
+
+
+def _bump_ending(acc: Dict[str, Dict[str, int]], cause: Any, round_row: Dict[str, Any]) -> None:
+    if cause not in ENDING_KEYS:
+        return
+    item = acc.setdefault(cause, {"rounds": 0, "wins": 0})
+    item["rounds"] += 1
+    item["wins"] += 1 if round_row.get("won") else 0
+
+
+def _finalize_endings(acc: Dict[str, Dict[str, int]]) -> List[Dict[str, Any]]:
+    endings = []
+    for cause_id, label, side in ENDING_ORDER:
+        item = acc.get(cause_id) or {"rounds": 0, "wins": 0}
+        rounds = int(item.get("rounds") or 0)
+        wins = int(item.get("wins") or 0)
+        endings.append(
+            {
+                "id": cause_id,
+                "label": label,
+                "side": side,
+                "rounds": rounds,
+                "wins": wins,
+                "losses": max(0, rounds - wins),
+                "win_rate": _pct(wins, rounds),
+            }
+        )
+    other = acc.get(END_OTHER) or {"rounds": 0, "wins": 0}
+    if other.get("rounds"):
+        rounds = int(other["rounds"])
+        wins = int(other.get("wins") or 0)
+        endings.append(
+            {
+                "id": END_OTHER,
+                "label": "Autre fin de round",
+                "side": None,
+                "rounds": rounds,
+                "wins": wins,
+                "losses": max(0, rounds - wins),
+                "win_rate": _pct(wins, rounds),
+            }
+        )
+    return endings
+
+
+def _acs_impact(match_cards: List[Dict[str, Any]]) -> Dict[str, Any]:
+    """Compare win rate on high-ACS games with win rate on low-ACS games."""
+    eligible = [card for card in match_cards if float(card.get("acs") or 0) > 0]
+    if len(eligible) < 4:
+        return {"available": False, "matches": len(eligible)}
+
+    acs_values = [float(card["acs"]) for card in eligible]
+    median = _median(acs_values)
+    high = [card for card in eligible if float(card["acs"]) >= median]
+    low = [card for card in eligible if float(card["acs"]) < median]
+    if not high or not low:
+        return {"available": False, "matches": len(eligible)}
+
+    high_wins = sum(1 for card in high if card.get("won"))
+    low_wins = sum(1 for card in low if card.get("won"))
+    high_win_rate = _pct(high_wins, len(high))
+    low_win_rate = _pct(low_wins, len(low))
+    lift = round(high_win_rate - low_win_rate, 1)
+    correlation = round(
+        _pearson(acs_values, [1.0 if card.get("won") else 0.0 for card in eligible]), 2
+    )
+
+    if correlation >= 0.35:
+        strength, strength_label = "strong", "forte"
+    elif correlation >= 0.15:
+        strength, strength_label = "moderate", "modérée"
+    elif correlation > -0.15:
+        strength, strength_label = "weak", "faible"
+    else:
+        strength, strength_label = "negative", "négative"
+
+    if lift >= 10:
+        verdict = "Ton ACS se convertit en victoires."
+    elif lift <= -10:
+        verdict = "Ton ACS ne se convertit pas en victoires."
+    else:
+        verdict = "Ton ACS est peu lié au résultat."
+
+    return {
+        "available": True,
+        "matches": len(eligible),
+        "median_acs": _round(median),
+        "high": {"matches": len(high), "wins": high_wins, "win_rate": high_win_rate},
+        "low": {"matches": len(low), "wins": low_wins, "win_rate": low_win_rate},
+        "lift": lift,
+        "correlation": correlation,
+        "strength": strength,
+        "strength_label": strength_label,
+        "verdict": verdict,
+    }
+
+
+def _build_rr_history(rows: List[Dict[str, Any]], match_cards: List[Dict[str, Any]]) -> Dict[str, Any]:
+    empty = {
+        "available": False,
+        "metric": "elo",
+        "metric_label": "RR cumulés",
+        "points": [],
+        "current": None,
+        "start": None,
+        "change": 0,
+        "matches": 0,
+    }
+    if not rows:
+        return empty
+
+    elo_rows = [row for row in rows if int(row.get("elo") or 0) > 0]
+    use_elo = len(elo_rows) >= 2
+    if use_elo:
+        rows = elo_rows
+    cards = {card["match_id"]: card for card in match_cards}
+    points = []
+    for row in rows:
+        match_id = row.get("match_id") or ""
+        value = int(row.get("elo") or 0) if use_elo else int(row.get("rr") or 0)
+        card = cards.get(match_id)
+        played_at = row.get("played_at") or ""
+        points.append(
+            {
+                "match_id": match_id,
+                "date": played_at,
+                "label": _date_label(played_at),
+                "value": value,
+                "elo": int(row.get("elo") or 0),
+                "rr": int(row.get("rr") or 0),
+                "delta": int(row.get("last_change") or 0),
+                "tier": row.get("tier_name") or "",
+                "map": row.get("map_name") or (card["map"] if card else ""),
+                "agent": card["agent"] if card else "",
+                "score": card["score"] if card else "",
+                "won": card["won"] if card else None,
+                "draw": card["draw"] if card else None,
+            }
+        )
+
+    points.sort(key=lambda point: (point["date"], point["match_id"]))
+    points = points[-120:]
+    if not points:
+        return empty
+    change = points[-1]["value"] - points[0]["value"] if len(points) > 1 else 0
+    return {
+        "available": len(points) >= 2,
+        "metric": "elo" if use_elo else "rr",
+        "metric_label": "RR cumulés" if use_elo else "RR dans le rang",
+        "points": points,
+        "current": points[-1],
+        "start": points[0],
+        "change": change,
+        "matches": len(points),
+    }
+
+
 def _priority(group: Dict[str, Any], direction: str) -> float:
     """Rank strengths/weaknesses by gap to baseline, tempered by sample size."""
     sample_factor = 0.2 + 0.8 * min(group["matches"], 20) / 20.0
@@ -198,6 +394,7 @@ def _build_insights(
     agents: List[Dict[str, Any]],
     maps: List[Dict[str, Any]],
     trend: List[Dict[str, Any]],
+    acs_impact: Optional[Dict[str, Any]] = None,
 ) -> List[Dict[str, Any]]:
     insights: List[Dict[str, Any]] = []
     base = summary
@@ -380,6 +577,35 @@ def _build_insights(
                     }
                 )
 
+    if acs_impact and acs_impact.get("available") and acs_impact.get("matches", 0) >= 4:
+        lift = acs_impact["lift"]
+        high = acs_impact["high"]
+        low = acs_impact["low"]
+        if lift >= 10:
+            kind = "strength"
+            title = "Ton ACS se convertit en victoires"
+        elif lift <= -10:
+            kind = "weakness"
+            title = "Ton ACS ne se convertit pas en victoires"
+        else:
+            kind = "info"
+            title = "Ton ACS est peu lié au résultat"
+        insights.append(
+            {
+                "kind": kind,
+                "tag": "CONVERSION",
+                "title": title,
+                "detail": (
+                    f"Quand ton ACS atteint {acs_impact['median_acs']:.0f} ou plus, tu gagnes "
+                    f"{high['win_rate']:.0f} % de tes parties ({high['matches']}), contre "
+                    f"{low['win_rate']:.0f} % en dessous ({low['matches']}). "
+                    f"Écart de {lift:+.0f} points, corrélation {acs_impact['strength_label']}."
+                ),
+                "confidence": _reliability(acs_impact["matches"], "overall"),
+                "sample": acs_impact["matches"],
+            }
+        )
+
     if not insights:
         insights.append(
             {
@@ -401,8 +627,10 @@ def _build_insights(
 def compute(db: Database, mode: str = "tactical", days: int = 90) -> Dict[str, Any]:
     matches = db.query_matches(mode=mode, days=days)
     rounds_by_match = db.rounds_for([m["match_id"] for m in matches])
+    mmr_rows = db.query_mmr_history(days=days)
 
     overall = _empty_acc()
+    overall_endings: Dict[str, Dict[str, int]] = {}
     agent_accs: Dict[str, Dict[str, Any]] = {}
     map_accs: Dict[str, Dict[str, Any]] = {}
     match_cards: List[Dict[str, Any]] = []
@@ -427,8 +655,14 @@ def compute(db: Database, mode: str = "tactical", days: int = 90) -> Dict[str, A
                 "id": map_key,
                 "name": match.get("map_name") or "Inconnue",
                 "agents": {},
+                "endings": {},
             }
         _add_match(map_accs[map_key]["acc"], match, rounds)
+
+        for row in rounds:
+            cause = row.get("end_cause")
+            _bump_ending(overall_endings, cause, row)
+            _bump_ending(map_accs[map_key]["endings"], cause, row)
 
         # Cross-tab map x agent: which agents actually perform on each map.
         map_agents = map_accs[map_key]["agents"]
@@ -478,6 +712,9 @@ def compute(db: Database, mode: str = "tactical", days: int = 90) -> Dict[str, A
         )
 
     summary = _finalize(overall, "overall")
+    summary["endings"] = _finalize_endings(overall_endings)
+    summary["ending_rounds"] = sum(item["rounds"] for item in summary["endings"])
+    summary["rounds_without_cause"] = max(0, summary["rounds"] - summary["ending_rounds"])
     agents = []
     for item in agent_accs.values():
         row = _finalize(item["acc"], "agent")
@@ -490,6 +727,9 @@ def compute(db: Database, mode: str = "tactical", days: int = 90) -> Dict[str, A
         row = _finalize(item["acc"], "map")
         row.update({"id": item["id"], "name": item["name"]})
         row["reliability"] = _reliability(row["matches"], "map")
+        row["endings"] = _finalize_endings(item["endings"])
+        row["ending_rounds"] = sum(ending["rounds"] for ending in row["endings"])
+        row["rounds_without_cause"] = max(0, row["rounds"] - row["ending_rounds"])
 
         map_agents = []
         for entry in item["agents"].values():
@@ -527,7 +767,9 @@ def compute(db: Database, mode: str = "tactical", days: int = 90) -> Dict[str, A
     ]
 
     recent = sorted(match_cards, key=lambda m: m["date"], reverse=True)[:60]
-    insights = _build_insights(summary, agents, maps, trend)
+    acs_impact = _acs_impact(match_cards)
+    rr_history = _build_rr_history(mmr_rows, match_cards)
+    insights = _build_insights(summary, agents, maps, trend, acs_impact)
     eligible = [card for card in match_cards if card["acs"] > 0]
     highlight = max(eligible, key=lambda m: (m["acs"], m["kills"])) if eligible else None
 
@@ -544,6 +786,8 @@ def compute(db: Database, mode: str = "tactical", days: int = 90) -> Dict[str, A
         "agents": agents,
         "maps": maps,
         "trend": trend,
+        "rr_history": rr_history,
+        "acs_impact": acs_impact,
         "recent": recent,
         "highlight": highlight,
         "insights": insights,

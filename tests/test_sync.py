@@ -42,9 +42,10 @@ class QueueFilterTests(unittest.TestCase):
 
 
 class FakeClient:
-    def __init__(self, pages, detail=None):
+    def __init__(self, pages, detail=None, history=None):
         self.pages = pages
         self.detail = detail or {}
+        self.history = history or []
         self.match_calls = []
 
     def account(self, name, tag):
@@ -52,6 +53,9 @@ class FakeClient:
 
     def mmr(self, region, platform, name, tag):
         return {}
+
+    def mmr_history(self, region, platform, name, tag):
+        return self.history
 
     def matches(self, region, platform, name, tag, start=0, size=10):
         return self.pages.get(start, [])
@@ -79,7 +83,7 @@ class SyncQueueIntegrationTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def _run(self, client):
+    def _run(self, client, normalize_impl=None):
         def normalize(raw, puuid):
             metadata = raw["metadata"]
             queue = metadata.get("queue") or {}
@@ -91,7 +95,7 @@ class SyncQueueIntegrationTests(unittest.TestCase):
 
         with mock.patch.object(sync, "load_config", return_value=self.cfg), mock.patch.object(
             sync, "HenrikClient", return_value=client
-        ), mock.patch.object(sync, "normalize_match", side_effect=normalize):
+        ), mock.patch.object(sync, "normalize_match", side_effect=normalize_impl or normalize):
             manager = sync.SyncManager(self.db)
             manager._run(full=True)
         return manager
@@ -125,6 +129,124 @@ class SyncQueueIntegrationTests(unittest.TestCase):
         self.assertEqual(self.db.count_matches(), 0)
         self.assertEqual(client.match_calls, ["m1"])
         self.assertIn("hors compétitif", manager.snapshot()["message"])
+
+    def test_mmr_history_is_imported_without_blocking_matches(self):
+        client = FakeClient(
+            {0: [_raw("c1", {"id": "competitive"})]},
+            history=[
+                {
+                    "date": "2026-10-01T20:00:00Z",
+                    "elo": 1540,
+                    "last_change": 22,
+                    "rr": 40,
+                    "tier": {"id": 15, "name": "Diamond 1"},
+                    "map": {"id": "ascent", "name": "Ascent"},
+                    "season": {"id": "s1", "short": "S1"},
+                    "match_id": "c1",
+                }
+            ],
+        )
+
+        manager = self._run(client)
+
+        self.assertEqual(self.db.count_mmr_history(), 1)
+        row = self.db.query_mmr_history(days=0)[0]
+        self.assertEqual(row["match_id"], "c1")
+        self.assertEqual(row["elo"], 1540)
+        self.assertEqual(row["last_change"], 22)
+        self.assertEqual(row["tier_name"], "Diamond 1")
+        self.assertEqual(manager.snapshot()["new_matches"], 1)
+
+    def test_old_matches_are_backfilled_with_end_causes(self):
+        old = {
+            "match_id": "old",
+            "started_at": "2026-09-01T00:00:00Z",
+            "queue_id": "competitive",
+            "queue_name": "Competitive",
+            "rounds_played": 2,
+            "is_demo": 0,
+            "synced_at": "2026-09-01T00:00:00Z",
+        }
+        self.db.upsert_match(
+            old,
+            [
+                {"match_id": "old", "round_num": 1, "side": "attack", "won": 1},
+                {"match_id": "old", "round_num": 2, "side": "defense", "won": 0},
+            ],
+        )
+        raw = {
+            "metadata": {"match_id": "old", "queue": {"id": "competitive"}},
+            "players": [{"puuid": "pu-1"}],
+            "rounds": [{"id": 1}, {"id": 2}],
+        }
+        client = FakeClient({}, {"old": raw})
+
+        def normalize_impl(payload, puuid):
+            row = dict(old)
+            rounds = [
+                {"match_id": "old", "round_num": 1, "side": "attack", "won": 1, "end_cause": "detonation"},
+                {"match_id": "old", "round_num": 2, "side": "defense", "won": 0, "end_cause": "defuse"},
+            ]
+            return row, rounds
+
+        manager = self._run(client, normalize_impl=normalize_impl)
+
+        self.assertEqual(client.match_calls, ["old"])
+        rows = self.db.rounds_for(["old"])["old"]
+        self.assertEqual([row["end_cause"] for row in rows], ["detonation", "defuse"])
+        self.assertIn("complétée", manager.snapshot()["message"])
+
+
+class MmrHistoryNormalizationTests(unittest.TestCase):
+    def test_v2_payload_is_flattened(self):
+        rows = sync.normalize_mmr_history(
+            {
+                "history": [
+                    {
+                        "date": "2026-10-01T20:00:00Z",
+                        "elo": 1540,
+                        "last_change": 22,
+                        "rr": 40,
+                        "tier": {"id": 15, "name": "Diamond 1"},
+                        "map": {"id": "ascent", "name": "Ascent"},
+                        "season": {"id": "s1", "short": "S1"},
+                        "match_id": "m1",
+                    }
+                ]
+            }
+        )
+        self.assertEqual(len(rows), 1)
+        row = rows[0]
+        self.assertEqual(row["match_id"], "m1")
+        self.assertEqual(row["played_at"], "2026-10-01T20:00:00Z")
+        self.assertEqual(row["elo"], 1540)
+        self.assertEqual(row["rr"], 40)
+        self.assertEqual(row["last_change"], 22)
+        self.assertEqual(row["map_name"], "Ascent")
+        self.assertEqual(row["season_short"], "S1")
+        self.assertEqual(row["is_demo"], 0)
+
+    def test_legacy_fields_are_supported(self):
+        rows = sync.normalize_mmr_history(
+            [
+                {
+                    "date": "2026-10-01T20:00:00Z",
+                    "mmr_change_to_last_game": -12,
+                    "ranking_in_tier": 55,
+                    "currenttierpatched": "Platinum 3",
+                    "match_id": "m2",
+                }
+            ],
+            is_demo=True,
+        )
+        self.assertEqual(rows[0]["last_change"], -12)
+        self.assertEqual(rows[0]["rr"], 55)
+        self.assertEqual(rows[0]["tier_name"], "Platinum 3")
+        self.assertEqual(rows[0]["is_demo"], 1)
+
+    def test_entries_without_a_match_id_are_skipped(self):
+        self.assertEqual(sync.normalize_mmr_history([{"elo": 1200}]), [])
+        self.assertEqual(sync.normalize_mmr_history(None), [])
 
 
 if __name__ == "__main__":

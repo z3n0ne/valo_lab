@@ -116,6 +116,19 @@ class HenrikClient:
             f"{quote(name, safe='')}/{quote(tag, safe='')}"
         )
 
+    def mmr_history(self, region: str, platform: str, name: str, tag: str) -> List[Dict[str, Any]]:
+        data = self._request(
+            f"/valorant/v2/mmr-history/{quote(region, safe='')}/{quote(platform, safe='')}/"
+            f"{quote(name, safe='')}/{quote(tag, safe='')}"
+        )
+        if isinstance(data, dict):
+            history = data.get("history") or []
+        elif isinstance(data, list):
+            history = data
+        else:
+            history = []
+        return history if isinstance(history, list) else []
+
     def matches(
         self,
         region: str,

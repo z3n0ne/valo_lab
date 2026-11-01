@@ -31,6 +31,7 @@ class DemoDatasetTests(unittest.TestCase):
         self.assertEqual(added, 90)
         self.assertEqual(self.db.count_matches(demo=True), 90)
         self.assertEqual(self.db.count_matches(demo=False), 0)
+        self.assertEqual(self.db.count_mmr_history(demo=True), 90)
         self.assertTrue(self.db.has_demo())
 
     def test_seed_is_disabled_once_data_exists(self):
@@ -66,6 +67,7 @@ class DemoDatasetTests(unittest.TestCase):
                 self.assertEqual(sides, {"attack", "defense"})
                 wins = sum(row["won"] for row in played)
                 self.assertEqual(wins, match["score_mine"])
+                self.assertTrue(all(row["end_cause"] for row in played))
 
     def test_no_match_is_in_the_future(self):
         seed_demo(self.db)
@@ -108,6 +110,7 @@ class DemoDatasetTests(unittest.TestCase):
         removed = self.db.delete_demo()
         self.assertEqual(removed, 90)
         self.assertEqual(self.db.count_matches(), 0)
+        self.assertEqual(self.db.count_mmr_history(), 0)
         self.assertFalse(self.db.has_demo())
 
 

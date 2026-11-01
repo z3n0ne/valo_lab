@@ -21,9 +21,9 @@ python3 app.py
 
 | Onglet | Contenu |
 | --- | --- |
-| **Vue d'ensemble** | WR, K/D, KDA, ACS, ADR, HS %, rounds, tendance ACS/partie, forces & faiblesses, 10 dernières parties |
+| **Vue d'ensemble** | WR, K/D, KDA, ACS, ADR, HS %, rounds, conversion de l'ACS, évolution des RR, forces & faiblesses, 10 dernières parties |
 | **Agents** | Win rate, K/D, KDA, ACS, ADR, HS %, WR attaque / défense et indice de performance par agent |
-| **Maps** | Même chose par map + graphique de win rate ; clique sur une map pour voir tes stats agent par agent sur cette map |
+| **Maps** | Même chose par map + graphique de win rate ; clique sur une map pour voir tes stats agent par agent et les scénarios de fin de round sur cette map |
 | **Attaque / Défense** | Win rate de round par côté, K/D et ACS par côté, écart par map et par agent |
 | **Parties** | Encart « Meilleure partie » (plus haut ACS) + historique filtrable (map, agent, file) avec score, K/D/A, ACS et rounds gagnés par côté |
 
@@ -42,6 +42,18 @@ précise) et **période** (30 jours, 90 jours, 6 mois, tout).
 - **Détail d'une map** : le même indice est recalculé pour chaque agent par
   rapport à ta moyenne **sur cette map**, afin de répondre à « quel agent marche
   le mieux ici pour moi ? ».
+- **Scénarios de fin de round** : chaque round est classé selon sa fin —
+  explosion du spike, élimination des défenseurs (victoire attaque), fin du temps,
+  defuse du spike ou élimination des attaquants (victoire défense). Le détail
+  d'une map affiche pour chaque scénario le nombre de rounds, les victoires, les
+  défaites et le win rate correspondant.
+- **Conversion de l'ACS** : les parties sont coupées à la **médiane de ton ACS**.
+  Le dashboard compare ton win rate au-dessus et en dessous de cette médiane,
+  affiche l'écart en points et une corrélation entre ACS et victoire. Cela répond
+  à « un gros score de combat se transforme-t-il vraiment en wins ? ».
+- **Évolution des RR** : historique de ton rang dans le temps, avec le RR cumulé
+  (`elo`) quand l'API le fournit, sinon le RR dans le rang actuel. Chaque point
+  est coloré selon le résultat de la partie.
 - **Meilleure partie** : la partie de la période avec le plus haut ACS (départage
   par le nombre de kills). Elle reste visible même si elle sort des 60 dernières.
 - **Forces & faiblesses** : le moteur compare chaque agent, map et côté à ta moyenne,
@@ -118,6 +130,12 @@ automatiquement s'il est occupé).
 - **Bouton « Synchroniser »** : relance une récupération à tout moment.
 - Une synchronisation complète (`Récupérer plus d'historique` dans les réglages)
   retélécharge aussi les parties déjà connues.
+- **Historique RR** : chaque synchronisation importe aussi les dernières variations
+  de RR via l'endpoint MMR history. Si l'API ne répond pas sur cet endpoint, les
+  parties sont quand même importées.
+- **Anciennes parties** : lors d'une synchronisation normale, le dashboard complète
+  automatiquement les fins de round manquantes (jusqu'à 60 parties), sans exiger
+  une synchronisation complète. Cette étape est non bloquante elle aussi.
 
 Options utiles :
 
@@ -165,7 +183,7 @@ synchronisation, ou manuellement via `Effacer la démo`.
 ```
 data/
 ├── config.json     # Riot ID, région, file (compétitif/tactique), clé API (0600)
-└── valorant.db     # base SQLite : parties, rounds, profil
+└── valorant.db     # base SQLite : parties, rounds, historique RR, profil
 ```
 
 Supprimer le dossier `data/` remet le dashboard à zéro (démo incluse).
@@ -181,16 +199,19 @@ python3 -m unittest discover -s tests -v
 
 La suite couvre :
 
-- `tests/test_parser.py` — normalisation des parties v4 et attribution du côté
-  attaque/défense (rôle de l'équipe gagnante, plant, defuse, kill feed) ;
+- `tests/test_parser.py` — normalisation des parties v4, attribution du côté
+  attaque/défense (rôle de l'équipe gagnante, plant, defuse, kill feed) et
+  classification des fins de round ;
 - `tests/test_analytics.py` — agrégations globales / agents / maps / côtés,
-  filtres de mode et de période, détail map × agent, meilleure partie et
-  génération des insights ;
-- `tests/test_sync.py` — filtrage compétitif des parties et pagination
-  (client HenrikDev simulé) ;
-- `tests/test_db.py` — nettoyage des parties non compétitives dans SQLite ;
+  filtres de mode et de période, détail map × agent, scénarios de fin de round,
+  conversion ACS, historique RR, meilleure partie et génération des insights ;
+- `tests/test_sync.py` — filtrage compétitif des parties, pagination, import de
+  l'historique RR et complétion des anciennes fins de round (client simulé) ;
+- `tests/test_db.py` — schéma, migration `end_cause`, historique RR et nettoyage
+  des parties non compétitives dans SQLite ;
 - `tests/test_demo.py` — déterminisme et cohérence du jeu de démonstration
-  (scores VALORANT valides, rounds, dates passées, files compétitives) ;
+  (scores VALORANT valides, rounds, fins de round, historique RR, dates passées,
+  files compétitives) ;
 - `tests/test_henrik.py` — construction des requêtes, en-tête d'authentification,
   erreurs 401/404/429 et reprises réseau (réseau simulé) ;
 - `tests/test_api.py` — serveur HTTP réel sur un port éphémère : endpoints JSON,

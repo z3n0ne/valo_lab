@@ -54,6 +54,14 @@ class ClientRequestTests(unittest.TestCase):
         self.assertIn("nom%20bizarre", url)
         self.assertIn("tag%2F1", url)
 
+    def test_mmr_history_endpoint_unwraps_the_history(self):
+        payload = {"status": 200, "data": {"history": [{"match_id": "m1", "elo": 1500}]}}
+        with mock.patch("valorant.henrik.urlopen", return_value=_response(payload)) as urlopen:
+            history = self.client().mmr_history("eu", "pc", "JoueurTest", "TEST")
+        request = urlopen.call_args[0][0]
+        self.assertIn("/valorant/v2/mmr-history/eu/pc/JoueurTest/TEST", request.full_url)
+        self.assertEqual(history, [{"match_id": "m1", "elo": 1500}])
+
     def test_payload_status_error_is_raised(self):
         payload = {"status": 400, "errors": [{"message": "Invalid region"}]}
         with mock.patch("valorant.henrik.urlopen", return_value=_response(payload)):

@@ -7,6 +7,22 @@ from typing import Any, Dict, List, Optional, Tuple
 ATTACK = "attack"
 DEFENSE = "defense"
 
+END_DETONATION = "detonation"
+END_DEFUSE = "defuse"
+END_TIMEOUT = "timeout"
+END_ATTACK_ELIMINATION = "attack_elimination"
+END_DEFENSE_ELIMINATION = "defense_elimination"
+END_OTHER = "other"
+
+END_CAUSE_VALUES = (
+    END_DETONATION,
+    END_DEFUSE,
+    END_TIMEOUT,
+    END_ATTACK_ELIMINATION,
+    END_DEFENSE_ELIMINATION,
+    END_OTHER,
+)
+
 
 def _int(value: Any, default: int = 0) -> int:
     try:
@@ -64,6 +80,89 @@ def _side_for_round(raw_round: Dict[str, Any], my_team_id: str) -> Optional[str]
     if defuser:
         return DEFENSE if defuser == my_team_id else ATTACK
     return None
+
+
+def _winner_side(raw_round: Dict[str, Any], my_team_id: str, my_side: Optional[str]) -> Optional[str]:
+    role = _normalize_role(raw_round.get("winning_team_role"))
+    if role:
+        return role
+    winning_team = raw_round.get("winning_team")
+    if my_side and winning_team:
+        return my_side if winning_team == my_team_id else _flip(my_side)
+    return None
+
+
+def _defense_won_by_elimination(
+    raw_round: Dict[str, Any], my_team_id: str, my_side: Optional[str], round_kills: List[Dict[str, Any]]
+) -> bool:
+    winning_team = raw_round.get("winning_team")
+    teams = set()
+    for kill in round_kills:
+        for key in ("killer", "victim"):
+            team = (kill.get(key) or {}).get("team")
+            if team:
+                teams.add(team)
+    if not winning_team:
+        if my_side == DEFENSE:
+            winning_team = my_team_id
+        elif my_side == ATTACK:
+            winning_team = next((team for team in teams if team != my_team_id), "")
+    losing_teams = [team for team in teams if team != winning_team]
+    for team in losing_teams:
+        victims = {
+            (kill.get("victim") or {}).get("puuid")
+            for kill in round_kills
+            if (kill.get("victim") or {}).get("team") == team
+        }
+        if len(victims) >= 5:
+            return True
+    return False
+
+
+def _end_cause(
+    raw_round: Dict[str, Any],
+    my_team_id: str,
+    my_side: Optional[str],
+    round_kills: List[Dict[str, Any]],
+) -> str:
+    """Classify how a round ended, independently of which team won.
+
+    The five requested scenarios are stored as normalized ids so the analytics
+    layer does not have to understand HenrikDev's free-form result strings.
+    """
+    result = str(raw_round.get("result") or raw_round.get("round_result") or "")
+    ceremony = str(raw_round.get("ceremony") or "")
+    text = (result + " " + ceremony).strip().lower()
+    winner_side = _winner_side(raw_round, my_team_id, my_side)
+
+    if "cancel" in text or "surrend" in text or "abort" in text:
+        return END_OTHER
+    if "defus" in text:
+        return END_DEFUSE
+    if "deton" in text or "explo" in text:
+        return END_DETONATION
+    if "time" in text or "expir" in text:
+        return END_TIMEOUT
+    if "elimin" in text or "wipe" in text or "kill" in text:
+        if winner_side == ATTACK:
+            return END_ATTACK_ELIMINATION
+        if winner_side == DEFENSE:
+            return END_DEFENSE_ELIMINATION
+
+    # Older payloads may omit `result`: infer from the round objects.
+    if raw_round.get("defuse"):
+        return END_DEFUSE
+    if raw_round.get("plant") and winner_side == ATTACK:
+        return END_DETONATION
+    if winner_side == ATTACK:
+        return END_ATTACK_ELIMINATION
+    if winner_side == DEFENSE:
+        return (
+            END_DEFENSE_ELIMINATION
+            if _defense_won_by_elimination(raw_round, my_team_id, my_side, round_kills)
+            else END_TIMEOUT
+        )
+    return END_OTHER
 
 
 def normalize_match(raw: Dict[str, Any], puuid: str) -> Optional[Tuple[Dict[str, Any], List[Dict[str, Any]]]]:
@@ -134,6 +233,7 @@ def normalize_match(raw: Dict[str, Any], puuid: str) -> Optional[Tuple[Dict[str,
         )
         side = _side_for_round(raw_round, my_team_id)
         round_kills = kills_by_round.get(raw_round.get("id"), [])
+        end_cause = _end_cause(raw_round, my_team_id, side, round_kills)
 
         deaths = sum(1 for k in round_kills if (k.get("victim") or {}).get("puuid") == puuid)
         assists = sum(
@@ -171,6 +271,7 @@ def normalize_match(raw: Dict[str, Any], puuid: str) -> Optional[Tuple[Dict[str,
                 "legshots": _int(rs.get("legshots")),
                 "first_blood_mine": first_blood_mine,
                 "first_death_mine": first_death_mine,
+                "end_cause": end_cause,
             }
         )
 

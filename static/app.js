@@ -183,11 +183,6 @@
     return match.won ? "V" : "D";
   }
 
-  function average(list) {
-    if (!list || !list.length) return 0;
-    return list.reduce(function (sum, value) { return sum + (Number(value) || 0); }, 0) / list.length;
-  }
-
   /* --------------------------------------------------------------- fetching */
   async function fetchJSON(url, options) {
     const opts = Object.assign({ headers: {} }, options || {});
@@ -497,6 +492,13 @@
     const heroArt = cardArt || "/static/logo.png";
     const rank = rankBadge(profile);
 
+    const conversion = state.stats.acs_impact || {};
+    const conversionValue = conversion.available
+      ? (conversion.lift > 0 ? "+" : "") + Math.round(conversion.lift) + " pts"
+      : "—";
+    const conversionSub = conversion.available
+      ? "WR " + pct(conversion.high.win_rate) + " vs " + pct(conversion.low.win_rate)
+      : "pas assez de parties";
     const kpi = [
       kpiCard("Win rate", pct(s.win_rate, 1), s.wins + " V · " + s.losses + " D" + (s.draws ? " · " + s.draws + " N" : ""), s.win_rate >= 50 ? "positive" : "negative"),
       kpiCard("K/D", fmt2(s.kd), "KDA " + fmt2(s.kda) + " · " + fmtInt(s.kills) + " kills", s.kd >= 1.1 ? "positive" : s.kd < 0.95 ? "negative" : ""),
@@ -504,6 +506,7 @@
       kpiCard("ADR", fmtInt(s.adr), "dégâts infligés / round", ""),
       kpiCard("Headshot", pct(s.hs_pct, 1), "tirs à la tête", ""),
       kpiCard("Rounds", fmtInt(s.rounds), "ATK " + pct(s.attack.round_win_rate) + " · DEF " + pct(s.defense.round_win_rate), ""),
+      kpiCard("Conversion ACS", conversionValue, conversionSub, conversion.available ? (conversion.lift >= 10 ? "positive" : conversion.lift <= -10 ? "negative" : "") : ""),
     ].join("");
 
     const insights = renderInsights();
@@ -532,11 +535,14 @@
       '<section class="section"><div class="section-head"><div><p class="eyebrow">Lecture automatique</p><h2>Forces &amp; faiblesses</h2></div>' +
       '<div class="section-note">Comparé à <b>ta moyenne</b> sur la période</div></div>' + insights + "</section>" +
 
-      '<section class="section"><div class="section-head"><div><p class="eyebrow">Régularité</p><h2>Tendance</h2></div>' +
-      '<div class="section-note">ACS par partie · moyenne <b>' + fmtInt(s.acs) + "</b></div></div>" +
-      '<div class="panel"><div class="trend-wrap">' + trendChart(state.stats.trend) + "</div>" +
-      '<div class="trend-legend"><span><i class="dot win"></i>Victoire</span><span><i class="dot loss"></i>Défaite</span><span><i class="dot draw"></i>Nul</span>' +
-      '<span class="spacer"></span><span>Les <b>10 dernières</b> : ACS ' + fmtInt(average(state.stats.trend.slice(-10).map(function (t) { return t.acs; }))) + "</span></div></div></section>" +
+      '<section class="section"><div class="section-head"><div><p class="eyebrow">Progression</p><h2>Évolution des RR</h2></div>' +
+      '<div class="section-note">' + esc(rrMetricLabel()) + ' · <b>' + fmtInt(rrMatches()) + "</b> parties suivies</div></div>" +
+      '<div class="panel"><div class="rr-wrap">' + rrChart(state.stats.rr_history) + "</div>" +
+      rrLegend(state.stats.rr_history) + "</div></section>" +
+
+      '<section class="section"><div class="section-head"><div><p class="eyebrow">Score → résultat</p><h2>Conversion de l\'ACS</h2></div>' +
+      '<div class="section-note">Ton score de combat se traduit-il en victoires ?</div></div>' +
+      acsConversion(state.stats.acs_impact) + "</section>" +
 
       '<section class="section"><div class="section-head"><div><p class="eyebrow">Par agent &amp; par map</p><h2>Où tu performes</h2></div>' +
       '<div class="section-note">Barres ACS · repère = ta moyenne</div></div><div class="charts-two">' +
@@ -633,22 +639,44 @@
   }
 
   /* ----------------------------------------------------------------- charts */
-  function trendChart(trend) {
-    if (!trend || trend.length < 2) {
-      return '<div class="chart-empty">Pas assez de parties pour afficher une tendance.</div>';
+  function rrMetricLabel() {
+    const rr = state.stats && state.stats.rr_history;
+    return rr && rr.available ? rr.metric_label : "Historique RR";
+  }
+
+  function rrMatches() {
+    const rr = state.stats && state.stats.rr_history;
+    return rr && rr.matches ? rr.matches : 0;
+  }
+
+  function rrLegend(history) {
+    if (!history || !history.available) return "";
+    const change = Number(history.change) || 0;
+    return (
+      '<div class="trend-legend rr-legend">' +
+      '<span><i class="dot win"></i>Victoire</span><span><i class="dot loss"></i>Défaite</span><span><i class="dot draw"></i>Nul</span>' +
+      '<span class="spacer"></span>' +
+      '<span>Départ <b>' + fmtInt(history.start.value) + "</b> · actuel <b>" + fmtInt(history.current.value) + "</b></span>" +
+      '<span class="' + (change > 0 ? "up" : change < 0 ? "down" : "") + '"><b>' + signed(change) + "</b> sur la période</span></div>"
+    );
+  }
+
+  function rrChart(history) {
+    if (!history || !history.available || !history.points || history.points.length < 2) {
+      return '<div class="chart-empty">Pas encore d\'historique RR. Une synchronisation importe tes variations de RR et complète automatiquement les anciennes parties.</div>';
     }
+    const points = history.points;
     const width = 960;
     const height = 250;
-    const pad = { l: 40, r: 16, t: 20, b: 28 };
-    const values = trend.map(function (t) { return Number(t.acs) || 0; });
+    const pad = { l: 48, r: 18, t: 22, b: 30 };
+    const values = points.map(function (p) { return Number(p.value) || 0; });
     let min = Math.min.apply(null, values);
     let max = Math.max.apply(null, values);
-    const spread = Math.max(25, max - min);
-    min = Math.max(0, min - spread * 0.28);
-    max = max + spread * 0.28;
-    const x = function (i) { return pad.l + (i / (trend.length - 1)) * (width - pad.l - pad.r); };
+    const spread = Math.max(40, max - min);
+    min = Math.max(0, min - spread * 0.22);
+    max = max + spread * 0.22;
+    const x = function (i) { return pad.l + (i / (points.length - 1)) * (width - pad.l - pad.r); };
     const y = function (v) { return pad.t + (1 - (v - min) / (max - min)) * (height - pad.t - pad.b); };
-    const avg = average(values);
 
     let grid = "";
     for (let i = 0; i <= 4; i++) {
@@ -656,39 +684,80 @@
       const yy = y(value);
       grid +=
         '<line x1="' + pad.l + '" y1="' + yy.toFixed(1) + '" x2="' + (width - pad.r) + '" y2="' + yy.toFixed(1) + '" stroke="rgba(255,255,255,0.055)" stroke-width="1"/>' +
-        '<text x="' + (pad.l - 8) + '" y="' + (yy + 3).toFixed(1) + '" fill="#617384" font-size="9" text-anchor="end" font-family="Barlow, sans-serif">' + Math.round(value) + "</text>";
+        '<text x="' + (pad.l - 8) + '" y="' + (yy + 3).toFixed(1) + '" fill="#617384" font-size="9" text-anchor="end" font-family="Barlow, sans-serif">' + fmtInt(value) + "</text>";
     }
 
     let path = "";
-    trend.forEach(function (t, i) {
-      path += (i === 0 ? "M" : "L") + x(i).toFixed(1) + "," + y(t.acs).toFixed(1) + " ";
+    points.forEach(function (p, i) {
+      path += (i === 0 ? "M" : "L") + x(i).toFixed(1) + "," + y(p.value).toFixed(1) + " ";
     });
-    const area = path + "L" + x(trend.length - 1).toFixed(1) + "," + (height - pad.b) + " L" + x(0).toFixed(1) + "," + (height - pad.b) + " Z";
+    const area = path + "L" + x(points.length - 1).toFixed(1) + "," + (height - pad.b) + " L" + x(0).toFixed(1) + "," + (height - pad.b) + " Z";
+    const rising = Number(history.change) >= 0;
+    const stroke = rising ? "#3ddc97" : "#ff5b64";
 
-    const dots = trend.map(function (t, i) {
-      const color = t.draw ? "#8798a9" : t.won ? "#3ddc97" : "#ff5b64";
+    const dots = points.map(function (p, i) {
+      const won = p.won === true || p.won === 1;
+      const lost = p.won === false || p.won === 0;
+      const color = p.draw ? "#8798a9" : won ? "#3ddc97" : lost ? "#ff5b64" : "#7d95a8";
+      const detail = p.label + " · " + (p.map || "Map inconnue") +
+        (p.agent ? " · " + p.agent : "") +
+        " · " + signed(p.delta) + " RR" +
+        (p.score ? " · " + p.score : "") +
+        " · RR " + fmtInt(p.value);
       return (
-        '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(t.acs).toFixed(1) + '" r="3.1" fill="' + color + '" stroke="#0d151e" stroke-width="1">' +
-        "<title>" + esc(t.label + " · " + t.agent + " sur " + t.map + " · " + t.score + " · ACS " + Math.round(t.acs)) + "</title></circle>"
+        '<circle cx="' + x(i).toFixed(1) + '" cy="' + y(p.value).toFixed(1) + '" r="3.1" fill="' + color + '" stroke="#0d151e" stroke-width="1">' +
+        "<title>" + esc(detail) + "</title></circle>"
       );
     }).join("");
 
-    const labelIndices = [0, Math.floor((trend.length - 1) / 2), trend.length - 1];
+    const labelIndices = [0, Math.floor((points.length - 1) / 2), points.length - 1];
     const labels = labelIndices.map(function (i) {
-      return '<text x="' + x(i).toFixed(1) + '" y="' + (height - 8) + '" fill="#617384" font-size="9" text-anchor="' + (i === 0 ? "start" : i === trend.length - 1 ? "end" : "middle") + '" font-family="Barlow, sans-serif">' + esc(trend[i].label) + "</text>";
+      return '<text x="' + x(i).toFixed(1) + '" y="' + (height - 8) + '" fill="#617384" font-size="9" text-anchor="' + (i === 0 ? "start" : i === points.length - 1 ? "end" : "middle") + '" font-family="Barlow, sans-serif">' + esc(points[i].label) + "</text>";
     }).join("");
 
     return (
-      '<svg class="trend-svg" viewBox="0 0 ' + width + " " + height + '" role="img" aria-label="Évolution de l\'ACS par partie">' +
-      '<defs><linearGradient id="trendFill" x1="0" y1="0" x2="0" y2="1">' +
-      '<stop offset="0%" stop-color="#ff4655" stop-opacity="0.26"/><stop offset="100%" stop-color="#ff4655" stop-opacity="0"/>' +
+      '<svg class="trend-svg rr-svg" viewBox="0 0 ' + width + " " + height + '" role="img" aria-label="Évolution de tes RR">' +
+      '<defs><linearGradient id="rrFill" x1="0" y1="0" x2="0" y2="1">' +
+      '<stop offset="0%" stop-color="' + stroke + '" stop-opacity="0.22"/><stop offset="100%" stop-color="' + stroke + '" stop-opacity="0"/>' +
       "</linearGradient></defs>" +
       grid +
-      '<line x1="' + pad.l + '" y1="' + y(avg).toFixed(1) + '" x2="' + (width - pad.r) + '" y2="' + y(avg).toFixed(1) + '" stroke="rgba(236,232,225,0.28)" stroke-width="1" stroke-dasharray="4 4"/>' +
-      '<text x="' + (width - pad.r) + '" y="' + (y(avg) - 5).toFixed(1) + '" fill="#8798a9" font-size="9" text-anchor="end" font-family="Barlow, sans-serif">moy. ' + Math.round(avg) + "</text>" +
-      '<path d="' + area + '" fill="url(#trendFill)"/>' +
-      '<path d="' + path + '" fill="none" stroke="#ff4655" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>' +
-      dots + labels + "</svg>"
+      '<line x1="' + pad.l + '" y1="' + y(history.start.value).toFixed(1) + '" x2="' + (width - pad.r) + '" y2="' + y(history.start.value).toFixed(1) + '" stroke="rgba(236,232,225,0.22)" stroke-width="1" stroke-dasharray="4 4"/>' +
+      '<path d="' + area + '" fill="url(#rrFill)"/>' +
+      '<path d="' + path + '" fill="none" stroke="' + stroke + '" stroke-width="1.8" stroke-linejoin="round" stroke-linecap="round"/>' +
+      dots +
+      '<circle cx="' + x(points.length - 1).toFixed(1) + '" cy="' + y(points[points.length - 1].value).toFixed(1) + '" r="5.4" fill="none" stroke="' + stroke + '" stroke-width="1.4" opacity="0.65"/>' +
+      labels + "</svg>"
+    );
+  }
+
+  function acsConversion(conv) {
+    if (!conv || !conv.available) {
+      return '<div class="panel"><div class="chart-empty">Pas encore assez de parties avec un ACS pour mesurer la conversion. Il en faut au moins 4.</div></div>';
+    }
+    const tone = conv.lift >= 10 ? "good" : conv.lift <= -10 ? "bad" : "neutral";
+    const correlation = (conv.correlation > 0 ? "+" : "") + Number(conv.correlation || 0).toFixed(2).replace(".", ",");
+    return (
+      '<div class="panel conversion">' +
+      '<div class="conversion-grid">' +
+      conversionSide("ACS ≥ " + fmt1(conv.median_acs), conv.high) +
+      '<div class="conversion-delta ' + tone + '"><span class="value">' + signed(conv.lift) + ' pts</span><span class="label">d\'écart de win rate</span></div>' +
+      conversionSide("ACS < " + fmt1(conv.median_acs), conv.low) +
+      "</div>" +
+      '<div class="conversion-foot"><span class="chip ' + tone + '">Corrélation ' + esc(conv.strength_label) + " · " + correlation + "</span>" +
+      "<p><strong>" + esc(conv.verdict) + "</strong> Sur " + fmtInt(conv.matches) + " parties, la moitié haute de ton ACS affiche " +
+      pct(conv.high.win_rate) + " de win rate, contre " + pct(conv.low.win_rate) + " pour la moitié basse.</p></div>" +
+      "</div>"
+    );
+  }
+
+  function conversionSide(label, group) {
+    const tone = group.win_rate >= 50 ? "good" : "bad";
+    return (
+      '<div class="conversion-side">' +
+      '<span class="conversion-label">' + esc(label) + "</span>" +
+      '<span class="conversion-value">' + pct(group.win_rate) + "</span>" +
+      '<div class="conversion-track"><span class="' + tone + '" style="width:' + clamp(group.win_rate, 0, 100).toFixed(1) + '%"></span></div>' +
+      '<span class="conversion-sub">' + fmtInt(group.matches) + " parties · " + fmtInt(group.wins) + " victoires</span></div>"
     );
   }
 
@@ -873,7 +942,7 @@
       '<div class="panel"><div class="panel-head"><h3>Win rate par map</h3><p>Repère à 50 % · indice de performance</p></div>' +
       '<div class="panel-body map-bars">' + mapBars(maps) + "</div></div>" +
       '<div class="panel" style="margin-top:12px"><div class="panel-head"><h3>Détail par map</h3>' +
-      '<p>Clique sur une map pour voir tes stats par agent · ATK / DEF = win rate de round par côté</p></div><div class="table-wrap">' + mapsTable(maps) + "</div>" +
+      '<p>Clique sur une map pour voir tes stats par agent et les scénarios de fin de round · ATK / DEF = win rate de round par côté</p></div><div class="table-wrap">' + mapsTable(maps) + "</div>" +
       (state.openMap ? mapDetail(maps.find(function (m) { return m.id === state.openMap; })) : "") +
       '<div class="table-foot"><span>Les maps avec peu de parties ont un indice moins fiable.</span><span>Clique sur un en-tête pour trier.</span><span class="only-mobile">Glisse pour voir toutes les colonnes.</span></div></div>'
     );
@@ -937,34 +1006,68 @@
   function mapDetail(m) {
     if (!m) return "";
     const agents = m.agents || [];
-    if (!agents.length) {
-      return '<div class="map-detail" id="map-detail-panel"><p class="muted">Pas encore assez de parties sur cette map.</p></div>';
-    }
+    const endings = (m.endings || []).filter(function (e) { return e.rounds > 0; });
     const best = agents.find(function (a) { return a.matches >= 2; }) || null;
+    const agentTable = agents.length
+      ? '<div class="table-wrap"><table class="data compact"><thead><tr>' +
+        "<th>Agent</th><th class=\"num\">Parties</th><th class=\"num\">WR</th><th class=\"num\">K/D</th><th class=\"num\">ACS</th><th class=\"num\">ADR</th><th class=\"num\">ATK WR</th><th class=\"num\">DEF WR</th><th class=\"num\">Indice</th>" +
+        "</tr></thead><tbody>" +
+        agents.map(function (a) {
+          const isBest = best && a.id === best.id;
+          return (
+            "<tr><td><div class=\"agent-cell\">" + agentAvatar(a.id, a.name) +
+            '<span class="strong">' + esc(a.name) + "</span>" +
+            (isBest ? '<span class="chip good">Meilleur</span>' : "") + "</div></td>" +
+            '<td class="num muted">' + a.matches + "</td>" +
+            '<td class="num ' + (a.win_rate >= 50 ? "strong" : "muted") + '">' + pct(a.win_rate) + "</td>" +
+            '<td class="num">' + fmt2(a.kd) + "</td>" +
+            '<td class="num strong">' + fmtInt(a.acs) + "</td>" +
+            '<td class="num muted">' + fmtInt(a.adr) + "</td>" +
+            '<td class="num">' + sideRate(a.attack) + "</td>" +
+            '<td class="num">' + sideRate(a.defense) + "</td>" +
+            '<td class="num">' + impactChip(a.impact) + "</td></tr>"
+          );
+        }).join("") +
+        "</tbody></table></div>"
+      : '<p class="muted map-detail-empty">Pas encore assez de parties sur cette map pour comparer les agents.</p>';
+
     return (
       '<div class="map-detail" id="map-detail-panel">' +
       '<div class="map-detail-head"><div><p class="eyebrow">Détail de la map</p><h4>Agents sur ' + esc(m.name) + "</h4></div>" +
       '<p class="map-detail-note">Indice calculé par rapport à ta moyenne sur cette map.</p></div>' +
-      '<div class="table-wrap"><table class="data compact"><thead><tr>' +
-      "<th>Agent</th><th class=\"num\">Parties</th><th class=\"num\">WR</th><th class=\"num\">K/D</th><th class=\"num\">ACS</th><th class=\"num\">ADR</th><th class=\"num\">ATK WR</th><th class=\"num\">DEF WR</th><th class=\"num\">Indice</th>" +
-      "</tr></thead><tbody>" +
-      agents.map(function (a) {
-        const isBest = best && a.id === best.id;
+      agentTable +
+      mapEndings(m, endings) +
+      "</div>"
+    );
+  }
+
+  function mapEndings(m, endings) {
+    const total = Number(m.ending_rounds) || 0;
+    const missing = Number(m.rounds_without_cause) || 0;
+    let body;
+    if (!endings.length) {
+      body = '<div class="chart-empty">Aucune fin de round classée pour cette map. Une synchronisation complète automatiquement les parties importées avant cette version.</div>';
+    } else {
+      body = '<div class="ending-grid">' + endings.map(function (e) {
+        const share = total ? (100 * e.rounds) / total : 0;
+        const tone = e.win_rate >= 55 ? "good" : e.win_rate <= 45 ? "bad" : "neutral";
+        const side = e.side === "attack" ? "ATK" : e.side === "defense" ? "DEF" : "—";
         return (
-          "<tr><td><div class=\"agent-cell\">" + agentAvatar(a.id, a.name) +
-          '<span class="strong">' + esc(a.name) + "</span>" +
-          (isBest ? '<span class="chip good">Meilleur</span>' : "") + "</div></td>" +
-          '<td class="num muted">' + a.matches + "</td>" +
-          '<td class="num ' + (a.win_rate >= 50 ? "strong" : "muted") + '">' + pct(a.win_rate) + "</td>" +
-          '<td class="num">' + fmt2(a.kd) + "</td>" +
-          '<td class="num strong">' + fmtInt(a.acs) + "</td>" +
-          '<td class="num muted">' + fmtInt(a.adr) + "</td>" +
-          '<td class="num">' + sideRate(a.attack) + "</td>" +
-          '<td class="num">' + sideRate(a.defense) + "</td>" +
-          '<td class="num">' + impactChip(a.impact) + "</td></tr>"
+          '<article class="ending-card ' + esc(e.side || "other") + '">' +
+          '<div class="ending-top"><span class="ending-side">' + side + '</span><span class="ending-share">' + pct(share) + " des fins</span></div>" +
+          "<h5>" + esc(e.label) + "</h5>" +
+          '<div class="ending-rate"><b>' + pct(e.win_rate) + "</b><span>WR</span></div>" +
+          '<div class="ending-track"><span class="bar-fill ' + tone + '" style="width:' + clamp(e.win_rate, 0, 100).toFixed(1) + '%"></span></div>' +
+          '<p class="ending-sub">' + fmtInt(e.wins) + " V · " + fmtInt(e.losses) + " D · " + fmtInt(e.rounds) + " rounds</p></article>"
         );
-      }).join("") +
-      "</tbody></table></div></div>"
+      }).join("") + "</div>";
+    }
+    return (
+      '<div class="map-endings">' +
+      '<div class="map-detail-head"><div><p class="eyebrow">Fins de round</p><h4>Scénarios sur ' + esc(m.name) + "</h4></div>" +
+      '<p class="map-detail-note">WR = tes rounds gagnés quand le round se termine ainsi' +
+      (missing ? " · " + fmtInt(missing) + " rounds non classés" : "") + ".</p></div>" +
+      body + "</div>"
     );
   }
 
